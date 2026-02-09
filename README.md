@@ -105,18 +105,28 @@ ccteams
 
 이미 `.ccteams-sync.json`이 있으면 바로 sync만 실행합니다.
 
-### 5. 프로젝트 정리 (팀 작업 종료 시)
+### 5. 프로젝트 종료 / 삭제
 
-팀 작업이 끝나면 GitHub Project와 관련 이슈를 한번에 정리할 수 있습니다:
+**작업 완료 시 — `close`** (프로젝트 보존):
+
+```bash
+ccteams close          # 확인 후 종료
+ccteams close --force  # 확인 없이 바로 종료
+```
+
+- 추적 중인 모든 Issue를 close
+- GitHub Project를 closed 상태로 변경 (GitHub에 보존됨)
+- `.ccteams-sync.json` 파일을 제거
+
+**잘못 생성했을 때 — `reset`** (프로젝트 삭제):
 
 ```bash
 ccteams reset          # 확인 후 삭제
 ccteams reset --force  # 확인 없이 바로 삭제
 ```
 
-이 명령은:
 - 추적 중인 모든 Issue를 close
-- GitHub Project를 삭제
+- GitHub Project를 **완전 삭제**
 - `.ccteams-sync.json` 파일을 제거
 
 ### 6. 칸반 보드 설정 (GitHub 웹에서)
@@ -141,7 +151,9 @@ GitHub API 제한으로 Board View 생성은 수동으로 해야 합니다:
 | `ccteams hooks install` | Claude Code hook 설치 |
 | `ccteams hooks uninstall` | Claude Code hook 제거 |
 | `ccteams status` | 현재 동기화 상태 출력 |
-| `ccteams reset` | 이슈 닫기 + 프로젝트 삭제 + sync state 제거 |
+| `ccteams close` | 이슈 닫기 + 프로젝트 종료 (보존) |
+| `ccteams close --force` | 확인 없이 바로 종료 |
+| `ccteams reset` | 이슈 닫기 + 프로젝트 삭제 |
 | `ccteams reset --force` | 확인 없이 바로 삭제 |
 
 ## 동기화 동작 방식
@@ -187,7 +199,8 @@ src/
     watch.ts            # ccteams watch
     hooks.ts            # ccteams hooks install/uninstall
     status.ts           # ccteams status
-    reset.ts            # ccteams reset
+    close.ts            # ccteams close (프로젝트 종료)
+    reset.ts            # ccteams reset (프로젝트 삭제)
   utils/
     gh-auth.ts          # gh CLI 인증 + GraphQL 실행
     git.ts              # git remote URL 파싱

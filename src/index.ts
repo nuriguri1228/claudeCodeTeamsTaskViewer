@@ -5,6 +5,7 @@ import { watchCommand } from './commands/watch.js';
 import { hooksInstallCommand, hooksUninstallCommand } from './commands/hooks.js';
 import { statusCommand } from './commands/status.js';
 import { resetCommand } from './commands/reset.js';
+import { closeCommand } from './commands/close.js';
 import { autoCommand } from './commands/auto.js';
 
 const program = new Command();
@@ -76,8 +77,16 @@ program
   });
 
 program
+  .command('close')
+  .description('Close all tracked issues and the GitHub Project (project is preserved on GitHub)')
+  .option('--force', 'Skip confirmation prompt')
+  .action(async (opts) => {
+    await closeCommand({ force: opts.force });
+  });
+
+program
   .command('reset')
-  .description('Close all tracked issues, delete the GitHub Project, and remove sync state')
+  .description('Close all tracked issues, DELETE the GitHub Project, and remove sync state')
   .option('--force', 'Skip confirmation prompt')
   .action(async (opts) => {
     await resetCommand({ force: opts.force });

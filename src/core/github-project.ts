@@ -394,6 +394,21 @@ export async function updateSingleSelectField(projectId: string, itemId: string,
 }
 
 /**
+ * Close a GitHub Project V2 (set closed: true, project is preserved)
+ */
+export async function closeProject(projectId: string): Promise<void> {
+  await withRetry(async () => {
+    await runGraphQL(`
+      mutation($projectId: ID!) {
+        updateProjectV2(input: { projectId: $projectId, closed: true }) {
+          projectV2 { id }
+        }
+      }
+    `, { projectId });
+  }, 'Close project');
+}
+
+/**
  * Delete a GitHub Project V2
  */
 export async function deleteProject(projectId: string): Promise<void> {
