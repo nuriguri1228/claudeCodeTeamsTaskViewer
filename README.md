@@ -93,7 +93,33 @@ ccteams hooks install --local    # 프로젝트별 로컬 설정에 추가
 
 Hook이 설치되면 Claude Code에서 `TaskCreate`/`TaskUpdate` 실행 시 자동으로 `ccteams sync --quiet`가 동작합니다.
 
-### 5. 칸반 보드 설정 (GitHub 웹에서)
+### 간편 실행 (init + sync 자동)
+
+```bash
+# 프로젝트 디렉터리에서 인수 없이 실행하면 자동으로:
+# 1. git remote에서 owner/repo 감지
+# 2. 팀 이름 기반으로 프로젝트 생성
+# 3. 즉시 sync 실행
+ccteams
+```
+
+이미 `.ccteams-sync.json`이 있으면 바로 sync만 실행합니다.
+
+### 5. 프로젝트 정리 (팀 작업 종료 시)
+
+팀 작업이 끝나면 GitHub Project와 관련 이슈를 한번에 정리할 수 있습니다:
+
+```bash
+ccteams reset          # 확인 후 삭제
+ccteams reset --force  # 확인 없이 바로 삭제
+```
+
+이 명령은:
+- 추적 중인 모든 Issue를 close
+- GitHub Project를 삭제
+- `.ccteams-sync.json` 파일을 제거
+
+### 6. 칸반 보드 설정 (GitHub 웹에서)
 
 GitHub API 제한으로 Board View 생성은 수동으로 해야 합니다:
 
@@ -106,6 +132,7 @@ GitHub API 제한으로 Board View 생성은 수동으로 해야 합니다:
 
 | 명령어 | 설명 |
 |--------|------|
+| `ccteams` | 자동 init + sync (sync state 있으면 바로 sync) |
 | `ccteams init --repo <owner/repo>` | 프로젝트 초기화 + repo 연결 |
 | `ccteams sync` | 태스크 → GitHub Issue 동기화 |
 | `ccteams sync --team <name>` | 특정 팀만 동기화 |
@@ -114,6 +141,8 @@ GitHub API 제한으로 Board View 생성은 수동으로 해야 합니다:
 | `ccteams hooks install` | Claude Code hook 설치 |
 | `ccteams hooks uninstall` | Claude Code hook 제거 |
 | `ccteams status` | 현재 동기화 상태 출력 |
+| `ccteams reset` | 이슈 닫기 + 프로젝트 삭제 + sync state 제거 |
+| `ccteams reset --force` | 확인 없이 바로 삭제 |
 
 ## 동기화 동작 방식
 
@@ -152,13 +181,17 @@ src/
     sync-state.ts       # .ccteams-sync.json 관리
     field-mapper.ts     # 태스크 → GitHub 필드 매핑
   commands/
+    auto.ts             # ccteams (기본 명령 — auto-init + sync)
     init.ts             # ccteams init
     sync.ts             # ccteams sync
     watch.ts            # ccteams watch
     hooks.ts            # ccteams hooks install/uninstall
     status.ts           # ccteams status
+    reset.ts            # ccteams reset
   utils/
     gh-auth.ts          # gh CLI 인증 + GraphQL 실행
+    git.ts              # git remote URL 파싱
+    lock.ts             # 파일 기반 동시 실행 방지
     logger.ts           # 컬러 로깅
     paths.ts            # 경로 헬퍼
     retry.ts            # 지수 백오프 재시도
