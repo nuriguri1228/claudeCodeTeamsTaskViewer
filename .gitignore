@@ -1,0 +1,4 @@
+node_modules
+dist
+.ccteams-sync.json
+*.tgz

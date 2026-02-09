@@ -1,0 +1,8 @@
+{
+  "team_name": "test-team",
+  "description": "Test team for unit tests",
+  "members": [
+    { "name": "researcher", "agentId": "researcher@test-team", "agentType": "general-purpose" },
+    { "name": "coder", "agentId": "coder@test-team", "agentType": "general-purpose" }
+  ]
+}

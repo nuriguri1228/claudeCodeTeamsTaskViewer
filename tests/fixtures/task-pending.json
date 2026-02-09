@@ -1,0 +1,8 @@
+{
+  "id": "1",
+  "subject": "Research the codebase",
+  "description": "Explore and understand the project structure",
+  "status": "pending",
+  "blockedBy": [],
+  "blocks": ["2"]
+}

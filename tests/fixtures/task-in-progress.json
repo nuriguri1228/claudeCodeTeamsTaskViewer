@@ -1,0 +1,10 @@
+{
+  "id": "2",
+  "subject": "Implement feature X",
+  "description": "Build the core feature based on research",
+  "status": "in_progress",
+  "owner": "coder",
+  "activeForm": "Implementing feature X",
+  "blockedBy": ["1"],
+  "blocks": ["3"]
+}
