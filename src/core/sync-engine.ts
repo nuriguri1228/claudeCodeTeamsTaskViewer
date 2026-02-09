@@ -210,9 +210,15 @@ export async function syncTasks(options: {
 }): Promise<SyncResult> {
   return withLock(getLockFilePath(), async () => {
   // loadSyncState() must be called inside the lock to read the latest state
-  const state = await loadSyncState();
+  let state = await loadSyncState();
   if (!state) {
-    throw new Error('Sync state not found. Run `ccteams init` first.');
+    // Auto-init under lock to prevent duplicate project creation
+    const { autoInit } = await import('../commands/auto.js');
+    await autoInit();
+    state = await loadSyncState();
+    if (!state) {
+      throw new Error('Auto-init failed. Run `ccteams init --repo <owner/repo>` manually.');
+    }
   }
 
   if (!state.repository?.id) {
