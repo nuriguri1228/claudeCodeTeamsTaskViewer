@@ -54,12 +54,11 @@ export async function readTeamTasks(teamName: string): Promise<Task[]> {
   return tasks;
 }
 
-// UUID pattern: 8-4-4-4-12 hex characters
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
- * List all available team names by scanning ~/.claude/tasks/
- * Excludes UUID-named directories (session IDs, not real team names).
+ * List active team names — only teams that have both:
+ *   - a task directory in ~/.claude/tasks/{teamName}/
+ *   - a config file in ~/.claude/teams/{teamName}/config.json
+ * This prevents syncing leftover/orphaned task directories from old sessions.
  */
 export async function listTeamNames(): Promise<string[]> {
   const tasksDir = getTasksDir();
@@ -69,7 +68,7 @@ export async function listTeamNames(): Promise<string[]> {
 
   const entries = await readdir(tasksDir, { withFileTypes: true });
   return entries
-    .filter(e => e.isDirectory() && !UUID_RE.test(e.name))
+    .filter(e => e.isDirectory() && existsSync(getTeamConfigPath(e.name)))
     .map(e => e.name);
 }
 
