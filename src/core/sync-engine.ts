@@ -58,9 +58,10 @@ async function ensureTeamLabel(state: SyncStateData, teamName: string): Promise<
 }
 
 /**
- * Refresh cached owner option IDs from the project's "Agent (Owner)" field.
+ * Refresh cached option IDs for ALL single-select fields (Status, Agent (Owner), etc.)
+ * from the live project. This prevents stale-ID errors when GitHub reassigns option IDs.
  */
-async function refreshOwnerOptions(state: SyncStateData): Promise<void> {
+async function refreshSelectOptions(state: SyncStateData): Promise<void> {
   if (!state.ownerOptions) state.ownerOptions = {};
 
   const data = await runGraphQL(`
@@ -85,7 +86,12 @@ async function refreshOwnerOptions(state: SyncStateData): Promise<void> {
       for (const opt of node.options) {
         state.ownerOptions[opt.name] = opt.id;
       }
-      break;
+    }
+    if (node.name === 'Status' && node.options) {
+      state.statusOptions = {};
+      for (const opt of node.options) {
+        state.statusOptions[opt.name] = opt.id;
+      }
     }
   }
 }
@@ -128,7 +134,7 @@ async function ensureOwnerOptions(state: SyncStateData, allTasks: Map<string, { 
 
   logger.info(`Adding owner options: ${newOwners.join(', ')}`);
   await updateFieldOptions(ownerFieldId, allOptions);
-  await refreshOwnerOptions(state);
+  await refreshSelectOptions(state);
   return true;
 }
 
@@ -160,31 +166,15 @@ async function setAllFields(
 
   // Agent (Owner) as single-select
   // Use task.owner if present, otherwise fall back to effectiveOwner (lastOwner)
+  // Owner options are pre-registered by ensureOwnerOptions before any parallel task processing.
   const ownerName = task.owner || effectiveOwner;
   if (ownerName) {
     const ownerFieldId = state.fields['Agent (Owner)'];
-    let ownerOptionId = state.ownerOptions?.[ownerName];
-
-    // If option not found, register it on-the-fly and retry (must be sequential)
-    if (ownerFieldId && !ownerOptionId) {
-      logger.info(`Owner option "${ownerName}" not found, registering on-the-fly`);
-      const allOptions = Object.keys(state.ownerOptions ?? {}).map((name, i) => ({
-        name,
-        color: OWNER_COLORS[i % OWNER_COLORS.length],
-        description: '',
-      }));
-      allOptions.push({
-        name: ownerName,
-        color: OWNER_COLORS[allOptions.length % OWNER_COLORS.length],
-        description: '',
-      });
-      await updateFieldOptions(ownerFieldId, allOptions);
-      await refreshOwnerOptions(state);
-      ownerOptionId = state.ownerOptions?.[ownerName];
-    }
-
+    const ownerOptionId = state.ownerOptions?.[ownerName];
     if (ownerFieldId && ownerOptionId) {
       fieldUpdates.push(updateSingleSelectField(projectId, itemId, ownerFieldId, ownerOptionId));
+    } else if (ownerFieldId && !ownerOptionId) {
+      logger.warn(`Owner option "${ownerName}" not found in cache, skipping (will be set on next sync)`);
     }
   }
 
@@ -302,6 +292,13 @@ export async function syncTasks(options: {
       const key = `${teamName}:${task.id}`;
       currentTasks.set(key, { task, teamName });
     }
+  }
+
+  // Always refresh select-field option IDs from the live project.
+  // GitHub reassigns ALL option IDs when updateFieldOptions is called,
+  // so cached IDs in the sync state file can become stale.
+  if (!options.dryRun) {
+    await refreshSelectOptions(state);
   }
 
   // Pre-register all owner names as single-select options
