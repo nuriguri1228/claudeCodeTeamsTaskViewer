@@ -7,6 +7,7 @@ export interface ItemMapping {
   issueNumber: number;
   lastHash: string;
   lastSyncedAt: string;
+  lastOwner?: string;
 }
 
 export interface SyncStateData {

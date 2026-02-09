@@ -91,9 +91,12 @@ async function refreshOwnerOptions(state: SyncStateData): Promise<void> {
  * Pre-register all owner names as single-select options before syncing.
  * This avoids per-task option creation and timing issues.
  */
-async function ensureOwnerOptions(state: SyncStateData, allTasks: Map<string, { task: Task; teamName: string }>): Promise<void> {
+/**
+ * Returns true if options were changed (new owners added).
+ */
+async function ensureOwnerOptions(state: SyncStateData, allTasks: Map<string, { task: Task; teamName: string }>): Promise<boolean> {
   const ownerFieldId = state.fields['Agent (Owner)'];
-  if (!ownerFieldId) return;
+  if (!ownerFieldId) return false;
   if (!state.ownerOptions) state.ownerOptions = {};
 
   // Collect all unique owner names
@@ -104,7 +107,7 @@ async function ensureOwnerOptions(state: SyncStateData, allTasks: Map<string, { 
 
   // Find new owners not yet in options
   const newOwners = [...ownerNames].filter(name => !state.ownerOptions[name]);
-  if (newOwners.length === 0) return;
+  if (newOwners.length === 0) return false;
 
   // Build full options list: existing + new
   const allOptions = Object.keys(state.ownerOptions).map((name, i) => ({
@@ -123,16 +126,19 @@ async function ensureOwnerOptions(state: SyncStateData, allTasks: Map<string, { 
   logger.info(`Adding owner options: ${newOwners.join(', ')}`);
   await updateFieldOptions(ownerFieldId, allOptions);
   await refreshOwnerOptions(state);
+  return true;
 }
 
 /**
  * Set all custom fields and status on a newly created project item.
+ * effectiveOwner allows fallback to lastOwner when task.owner is empty.
  */
 async function setAllFields(
   state: SyncStateData,
   itemId: string,
   task: Task,
   teamName: string,
+  effectiveOwner?: string,
 ): Promise<void> {
   const projectId = state.project.id;
 
@@ -146,8 +152,9 @@ async function setAllFields(
     }
   }
 
-  // Set Agent (Owner) as single-select (options pre-registered by ensureOwnerOptions)
-  const ownerName = task.owner;
+  // Set Agent (Owner) as single-select
+  // Use task.owner if present, otherwise fall back to effectiveOwner (lastOwner)
+  const ownerName = task.owner || effectiveOwner;
   if (ownerName) {
     const ownerFieldId = state.fields['Agent (Owner)'];
     const ownerOptionId = state.ownerOptions?.[ownerName];
@@ -162,6 +169,21 @@ async function setAllFields(
   const statusOptionId = state.statusOptions[statusLabel];
   if (statusFieldId && statusOptionId) {
     await updateSingleSelectField(projectId, itemId, statusFieldId, statusOptionId);
+  }
+}
+
+/**
+ * Set only the Agent (Owner) field on a project item.
+ */
+async function setOwnerField(
+  state: SyncStateData,
+  itemId: string,
+  ownerName: string,
+): Promise<void> {
+  const ownerFieldId = state.fields['Agent (Owner)'];
+  const ownerOptionId = state.ownerOptions?.[ownerName];
+  if (ownerFieldId && ownerOptionId) {
+    await updateSingleSelectField(state.project.id, itemId, ownerFieldId, ownerOptionId);
   }
 }
 
@@ -255,8 +277,37 @@ export async function syncTasks(options: {
   }
 
   // Pre-register all owner names as single-select options
+  // Also include lastOwner from sync state items so options aren't lost
   if (!options.dryRun) {
-    await ensureOwnerOptions(state, currentTasks);
+    for (const item of state.items) {
+      if (item.lastOwner) {
+        // Ensure lastOwner is also registered as an option
+        const key = `${item.teamName}:${item.taskId}`;
+        const entry = currentTasks.get(key);
+        if (entry && !entry.task.owner) {
+          // Task lost its owner; use lastOwner so the option stays registered
+          currentTasks.set(key, {
+            ...entry,
+            task: { ...entry.task, owner: item.lastOwner },
+          });
+        }
+      }
+    }
+    const ownersChanged = await ensureOwnerOptions(state, currentTasks);
+
+    // If options changed (IDs may have been reassigned), re-apply owner on all existing items
+    if (ownersChanged) {
+      for (const item of state.items) {
+        const ownerName = item.lastOwner;
+        if (ownerName && item.githubItemId) {
+          try {
+            await setOwnerField(state, item.githubItemId, ownerName);
+          } catch {
+            // Best effort — don't fail the whole sync
+          }
+        }
+      }
+    }
   }
 
   // Determine which sync state items are in scope
@@ -339,8 +390,9 @@ export async function syncTasks(options: {
       }
 
       // Set custom fields on the project item
+      const effectiveOwner = task.owner || '';
       if (itemId) {
-        await setAllFields(state, itemId, task, teamName);
+        await setAllFields(state, itemId, task, teamName, effectiveOwner);
       }
 
       const hash = computeTaskHash(task, teamName);
@@ -353,6 +405,7 @@ export async function syncTasks(options: {
         issueNumber: issue.number,
         lastHash: hash,
         lastSyncedAt: new Date().toISOString(),
+        lastOwner: effectiveOwner || undefined,
       });
 
       result.created++;
@@ -395,14 +448,16 @@ export async function syncTasks(options: {
       }
 
       // Update project item custom fields
+      const effectiveOwner = task.owner || item.lastOwner || '';
       if (item.githubItemId) {
-        await setAllFields(state, item.githubItemId, task, teamName);
+        await setAllFields(state, item.githubItemId, task, teamName, effectiveOwner);
       }
 
       upsertMapping(state, {
         ...item,
         lastHash: hash,
         lastSyncedAt: new Date().toISOString(),
+        lastOwner: effectiveOwner || undefined,
       });
 
       result.updated++;
