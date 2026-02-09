@@ -1,12 +1,17 @@
 import { loadSyncState } from '../core/sync-state.js';
 import { syncTasks } from '../core/sync-engine.js';
+import { autoInit } from './auto.js';
 import { logger } from '../utils/logger.js';
 
 export async function syncCommand(options: { team?: string; dryRun?: boolean; quiet?: boolean }): Promise<void> {
-  const state = await loadSyncState();
+  let state = await loadSyncState();
   if (!state) {
-    logger.error('Sync state not found. Run `ccteams init` first.');
-    process.exit(1);
+    await autoInit();
+    state = await loadSyncState();
+    if (!state) {
+      logger.error('Auto-init failed. Run `ccteams init --repo <owner/repo>` manually.');
+      process.exit(1);
+    }
   }
 
   if (!options.quiet) {

@@ -24,6 +24,18 @@ export async function autoCommand(): Promise<void> {
   }
 
   // No sync state — auto-init
+  await autoInit();
+
+  // Immediately sync
+  logger.info('Running initial sync...');
+  const result = await syncTasks({});
+  printSyncResult(result);
+}
+
+/**
+ * Auto-detect repo and create project. Reusable from syncCommand too.
+ */
+export async function autoInit(): Promise<void> {
   logger.info('No sync state found. Auto-initializing...');
 
   // Check gh auth
@@ -62,11 +74,6 @@ export async function autoCommand(): Promise<void> {
 
   // Perform init
   await performInit({ repoOwner, repoName, title });
-
-  // Immediately sync
-  logger.info('Running initial sync...');
-  const result = await syncTasks({});
-  printSyncResult(result);
 }
 
 function printSyncResult(result: { created: number; updated: number; archived: number; skipped: number; errors: Array<{ taskId: string; error: string }> }): void {
