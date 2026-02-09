@@ -25,12 +25,22 @@ export async function readTeamConfig(teamName: string): Promise<TeamConfig | nul
 
 /**
  * Read all tasks for a team from ~/.claude/tasks/{teamName}/
+ * Filters out team member assignment tasks (subject matches a member name).
  */
 export async function readTeamTasks(teamName: string): Promise<Task[]> {
   const tasksDir = getTeamTasksDir(teamName);
   if (!existsSync(tasksDir)) {
     logger.warn(`Tasks directory not found: ${tasksDir}`);
     return [];
+  }
+
+  // Get team member names to filter out member assignment tasks
+  const memberNames = new Set<string>();
+  const config = await readTeamConfig(teamName);
+  if (config) {
+    for (const member of config.members) {
+      memberNames.add(member.name);
+    }
   }
 
   const files = await readdir(tasksDir);
@@ -41,11 +51,16 @@ export async function readTeamTasks(teamName: string): Promise<Task[]> {
     try {
       const content = await readFile(join(tasksDir, file), 'utf-8');
       const task = JSON.parse(content) as Task;
-      if (task.id && task.subject) {
-        tasks.push(task);
-      } else {
+      if (!task.id || !task.subject) {
         logger.warn(`Skipping invalid task file: ${file}`);
+        continue;
       }
+      // Skip tasks whose subject is a team member name (these are member assignments, not real tasks)
+      if (memberNames.has(task.subject)) {
+        logger.debug(`Skipping member assignment task: ${task.subject}`);
+        continue;
+      }
+      tasks.push(task);
     } catch (err) {
       logger.warn(`Failed to parse task file: ${file}`);
     }
