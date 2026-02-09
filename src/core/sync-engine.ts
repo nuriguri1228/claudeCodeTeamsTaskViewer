@@ -14,11 +14,14 @@ import {
   createLabel,
   updateFieldOptions,
   getProjectFields,
+  getDefaultBranchOid,
+  createBranch,
 } from './github-project.js';
 import { runGraphQL } from '../utils/gh-auth.js';
 import { logger } from '../utils/logger.js';
 import { withLock } from '../utils/lock.js';
 import { getLockFilePath } from '../utils/paths.js';
+import { pMap } from '../utils/concurrency.js';
 
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
@@ -142,34 +145,59 @@ async function setAllFields(
 ): Promise<void> {
   const projectId = state.project.id;
 
-  // Set custom text fields (except Agent (Owner) which is SINGLE_SELECT)
+  // Collect all field update promises to run in parallel
+  const fieldUpdates: Promise<void>[] = [];
+
+  // Custom text fields (except Agent (Owner) which is SINGLE_SELECT)
   const customFields = mapCustomFields(task, teamName);
   for (const [fieldName, value] of Object.entries(customFields)) {
     if (fieldName === 'Agent (Owner)') continue;
     const fieldId = state.fields[fieldName];
     if (fieldId && value) {
-      await updateTextField(projectId, itemId, fieldId, value);
+      fieldUpdates.push(updateTextField(projectId, itemId, fieldId, value));
     }
   }
 
-  // Set Agent (Owner) as single-select
+  // Agent (Owner) as single-select
   // Use task.owner if present, otherwise fall back to effectiveOwner (lastOwner)
   const ownerName = task.owner || effectiveOwner;
   if (ownerName) {
     const ownerFieldId = state.fields['Agent (Owner)'];
-    const ownerOptionId = state.ownerOptions?.[ownerName];
+    let ownerOptionId = state.ownerOptions?.[ownerName];
+
+    // If option not found, register it on-the-fly and retry (must be sequential)
+    if (ownerFieldId && !ownerOptionId) {
+      logger.info(`Owner option "${ownerName}" not found, registering on-the-fly`);
+      const allOptions = Object.keys(state.ownerOptions ?? {}).map((name, i) => ({
+        name,
+        color: OWNER_COLORS[i % OWNER_COLORS.length],
+        description: '',
+      }));
+      allOptions.push({
+        name: ownerName,
+        color: OWNER_COLORS[allOptions.length % OWNER_COLORS.length],
+        description: '',
+      });
+      await updateFieldOptions(ownerFieldId, allOptions);
+      await refreshOwnerOptions(state);
+      ownerOptionId = state.ownerOptions?.[ownerName];
+    }
+
     if (ownerFieldId && ownerOptionId) {
-      await updateSingleSelectField(projectId, itemId, ownerFieldId, ownerOptionId);
+      fieldUpdates.push(updateSingleSelectField(projectId, itemId, ownerFieldId, ownerOptionId));
     }
   }
 
-  // Set status
+  // Status
   const statusLabel = mapStatus(task.status);
   const statusFieldId = state.fields['Status'];
   const statusOptionId = state.statusOptions[statusLabel];
   if (statusFieldId && statusOptionId) {
-    await updateSingleSelectField(projectId, itemId, statusFieldId, statusOptionId);
+    fieldUpdates.push(updateSingleSelectField(projectId, itemId, statusFieldId, statusOptionId));
   }
+
+  // Execute all field updates in parallel
+  await Promise.all(fieldUpdates);
 }
 
 /**
@@ -297,16 +325,14 @@ export async function syncTasks(options: {
 
     // If options changed (IDs may have been reassigned), re-apply owner on all existing items
     if (ownersChanged) {
-      for (const item of state.items) {
-        const ownerName = item.lastOwner;
-        if (ownerName && item.githubItemId) {
-          try {
-            await setOwnerField(state, item.githubItemId, ownerName);
-          } catch {
-            // Best effort — don't fail the whole sync
-          }
+      const ownerItems = state.items.filter(item => item.lastOwner && item.githubItemId);
+      await pMap(ownerItems, async (item) => {
+        try {
+          await setOwnerField(state, item.githubItemId, item.lastOwner!);
+        } catch {
+          // Best effort — don't fail the whole sync
         }
-      }
+      }, 5);
     }
   }
 
@@ -329,62 +355,83 @@ export async function syncTasks(options: {
   // Sort new tasks by dependency order so parents are created before children
   const sortedNewEntries = sortByDependency(newEntries);
 
-  // Create new issues
-  for (const { task, teamName } of sortedNewEntries) {
+  // Cache default branch OID once for all branch creations
+  let cachedBranchOid: string | undefined;
+  if (!options.dryRun && sortedNewEntries.length > 0) {
+    try {
+      const { oid } = await getDefaultBranchOid(state.repository.owner, state.repository.name);
+      cachedBranchOid = oid;
+    } catch {
+      logger.warn('Could not fetch default branch OID, branches will be skipped');
+    }
+  }
+
+  // Group new tasks by dependency level for parallel creation within each level
+  const depLevels: Array<Array<{ task: Task; teamName: string }>> = [];
+  const taskLevel = new Map<string, number>();
+  for (const entry of sortedNewEntries) {
+    let level = 0;
+    if (entry.task.blockedBy) {
+      for (const depId of entry.task.blockedBy) {
+        const depKey = `${entry.teamName}:${depId}`;
+        // Only count deps that are in the new entries set (others already exist)
+        const depLvl = taskLevel.get(depKey);
+        if (depLvl !== undefined) {
+          level = Math.max(level, depLvl + 1);
+        }
+      }
+    }
+    const key = `${entry.teamName}:${entry.task.id}`;
+    taskLevel.set(key, level);
+    while (depLevels.length <= level) depLevels.push([]);
+    depLevels[level].push(entry);
+  }
+
+  // Helper to create a single issue
+  async function createSingleIssue(task: Task, teamName: string): Promise<void> {
     const title = mapTitle(task);
     const body = mapBody(task, teamName);
 
     if (options.dryRun) {
       if (!options.quiet) logger.info(`[dry-run] Would create: ${title}`);
       result.created++;
-      continue;
+      return;
     }
 
     try {
       // Ensure team label exists
       let labelId: string | undefined;
       try {
-        labelId = await ensureTeamLabel(state, teamName);
+        labelId = await ensureTeamLabel(state!, teamName);
       } catch {
         logger.warn(`Could not create/find label for team "${teamName}", skipping label`);
       }
 
-      // Resolve parentIssueId from blockedBy
+      // Resolve parentIssueId from blockedBy (same team only)
       let parentIssueId: string | undefined;
       if (task.blockedBy && task.blockedBy.length > 0) {
         const parentTaskId = task.blockedBy[0];
-        // Look up the parent's issue ID from sync state (it should be synced by now due to sorting)
-        const parentMapping = findMapping(state, parentTaskId, teamName);
+        const parentMapping = findMapping(state!, parentTaskId, teamName);
         if (parentMapping?.issueNodeId) {
           parentIssueId = parentMapping.issueNodeId;
-        } else {
-          // Try finding in other teams
-          const crossTeamMapping = state.items.find(item => item.taskId === parentTaskId && item.issueNodeId);
-          if (crossTeamMapping?.issueNodeId) {
-            parentIssueId = crossTeamMapping.issueNodeId;
-          }
         }
       }
 
       // Create real issue in repository
       const issue = await createIssue({
-        repositoryId: state.repository.id,
+        repositoryId: state!.repository.id,
         title,
         body,
         labelIds: labelId ? [labelId] : undefined,
-        projectIds: [state.project.id],
+        projectIds: [state!.project.id],
         parentIssueId,
       });
 
-      // The issue is already added to the project via projectV2Ids in createIssue.
-      // We need the project item ID for setting custom fields.
-      // Use addProjectV2ItemById which returns item ID (it's idempotent if already added).
+      // Get project item ID for setting custom fields
       let itemId: string;
       try {
-        itemId = await addProjectV2ItemById(state.project.id, issue.id);
+        itemId = await addProjectV2ItemById(state!.project.id, issue.id);
       } catch {
-        // If already added via createIssue's projectV2Ids, the addProjectV2ItemById
-        // should still return the item ID. If it fails, we can't set custom fields.
         logger.warn(`Could not get project item ID for issue #${issue.number}, skipping custom fields`);
         itemId = '';
       }
@@ -392,11 +439,33 @@ export async function syncTasks(options: {
       // Set custom fields on the project item
       const effectiveOwner = task.owner || '';
       if (itemId) {
-        await setAllFields(state, itemId, task, teamName, effectiveOwner);
+        await setAllFields(state!, itemId, task, teamName, effectiveOwner);
+      }
+
+      // Create a branch for this issue
+      let branchName: string | undefined;
+      if (cachedBranchOid) {
+        try {
+          branchName = `ccteams/${teamName}/issue-${issue.number}`;
+          await createBranch(state!.repository.id, branchName, cachedBranchOid);
+          logger.info(`Created branch: ${branchName}`);
+
+          // Update issue body with branch link
+          await updateIssue(issue.id, mapTitle(task), mapBody(task, teamName, branchName));
+        } catch (branchErr) {
+          const branchMsg = branchErr instanceof Error ? branchErr.message : String(branchErr);
+          if (branchMsg.includes('already exists')) {
+            branchName = `ccteams/${teamName}/issue-${issue.number}`;
+            logger.info(`Branch already exists: ${branchName}`);
+          } else {
+            logger.warn(`Could not create branch for issue #${issue.number}: ${branchMsg}`);
+            branchName = undefined;
+          }
+        }
       }
 
       const hash = computeTaskHash(task, teamName);
-      upsertMapping(state, {
+      upsertMapping(state!, {
         taskId: task.id,
         teamName,
         githubItemId: itemId,
@@ -406,6 +475,7 @@ export async function syncTasks(options: {
         lastHash: hash,
         lastSyncedAt: new Date().toISOString(),
         lastOwner: effectiveOwner || undefined,
+        branchName,
       });
 
       result.created++;
@@ -417,7 +487,13 @@ export async function syncTasks(options: {
     }
   }
 
-  // Changed and unchanged: in both currentTasks and sync state
+  // Create new issues level by level (parallel within each level, sequential between levels)
+  for (const levelEntries of depLevels) {
+    await pMap(levelEntries, ({ task, teamName }) => createSingleIssue(task, teamName), 5);
+  }
+
+  // Collect items that need updating vs skipped
+  const updateEntries: Array<{ item: typeof scopedItems[0]; task: Task; teamName: string; hash: string }> = [];
   for (const item of scopedItems) {
     const key = `${item.teamName}:${item.taskId}`;
     const entry = currentTasks.get(key);
@@ -431,15 +507,19 @@ export async function syncTasks(options: {
       continue;
     }
 
-    // Hash changed - update
-    const title = mapTitle(task);
-    const body = mapBody(task, teamName);
-
     if (options.dryRun) {
-      if (!options.quiet) logger.info(`[dry-run] Would update: ${title}`);
+      if (!options.quiet) logger.info(`[dry-run] Would update: ${mapTitle(task)}`);
       result.updated++;
       continue;
     }
+
+    updateEntries.push({ item, task, teamName, hash });
+  }
+
+  // Update changed items in parallel (concurrency limit 5)
+  await pMap(updateEntries, async ({ item, task, teamName, hash }) => {
+    const title = mapTitle(task);
+    const body = mapBody(task, teamName, item.branchName);
 
     try {
       // Update the real issue
@@ -450,10 +530,10 @@ export async function syncTasks(options: {
       // Update project item custom fields
       const effectiveOwner = task.owner || item.lastOwner || '';
       if (item.githubItemId) {
-        await setAllFields(state, item.githubItemId, task, teamName, effectiveOwner);
+        await setAllFields(state!, item.githubItemId, task, teamName, effectiveOwner);
       }
 
-      upsertMapping(state, {
+      upsertMapping(state!, {
         ...item,
         lastHash: hash,
         lastSyncedAt: new Date().toISOString(),
@@ -467,39 +547,43 @@ export async function syncTasks(options: {
       result.errors.push({ taskId: task.id, error: message });
       logger.error(`Failed to update ${title}: ${message}`);
     }
-  }
+  }, 5);
 
-  // Deleted: in sync state but not in currentTasks
-  for (const item of scopedItems) {
+  // Collect items to archive
+  const archiveEntries = scopedItems.filter(item => {
     const key = `${item.teamName}:${item.taskId}`;
-    if (currentTasks.has(key)) continue;
+    return !currentTasks.has(key);
+  });
 
-    if (options.dryRun) {
+  if (options.dryRun) {
+    for (const item of archiveEntries) {
       if (!options.quiet) logger.info(`[dry-run] Would archive: ${item.teamName}:${item.taskId}`);
       result.archived++;
-      continue;
     }
+  } else {
+    // Archive/delete in parallel (concurrency limit 5)
+    await pMap(archiveEntries, async (item) => {
+      try {
+        // Close the real issue
+        if (item.issueNodeId) {
+          await closeIssue(item.issueNodeId);
+        }
 
-    try {
-      // Close the real issue
-      if (item.issueNodeId) {
-        await closeIssue(item.issueNodeId);
+        // Archive the project item
+        if (item.githubItemId) {
+          await archiveItem(state!.project.id, item.githubItemId);
+        }
+
+        removeMapping(state!, item.taskId, item.teamName);
+
+        result.archived++;
+        if (!options.quiet) logger.success(`Archived: ${item.teamName}:${item.taskId}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        result.errors.push({ taskId: item.taskId, error: message });
+        logger.error(`Failed to archive ${item.teamName}:${item.taskId}: ${message}`);
       }
-
-      // Archive the project item
-      if (item.githubItemId) {
-        await archiveItem(state.project.id, item.githubItemId);
-      }
-
-      removeMapping(state, item.taskId, item.teamName);
-
-      result.archived++;
-      if (!options.quiet) logger.success(`Archived: ${item.teamName}:${item.taskId}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      result.errors.push({ taskId: item.taskId, error: message });
-      logger.error(`Failed to archive ${item.teamName}:${item.taskId}: ${message}`);
-    }
+    }, 5);
   }
 
   // Save updated state

@@ -43,27 +43,63 @@ export async function readTeamTasks(teamName: string): Promise<Task[]> {
     }
   }
 
+  // Role assignment prompt patterns — tasks with these in description are agent assignments, not real work
+  const roleAssignmentPatterns = [
+    /^You are the\b/i,
+    /^당신은\b/,
+    /에이전트입니다/,
+    /^You are a\b/i,
+    /^Act as\b/i,
+  ];
+
   const files = await readdir(tasksDir);
   const jsonFiles = files.filter(f => f.endsWith('.json'));
-  const tasks: Task[] = [];
 
-  for (const file of jsonFiles) {
-    try {
-      const content = await readFile(join(tasksDir, file), 'utf-8');
-      const task = JSON.parse(content) as Task;
-      if (!task.id || !task.subject) {
-        logger.warn(`Skipping invalid task file: ${file}`);
-        continue;
+  // First pass: collect all tasks and all owner names (parallel file I/O)
+  const allParsed: Task[] = [];
+  const ownerNames = new Set<string>();
+  const parseResults = await Promise.all(
+    jsonFiles.map(async (file) => {
+      try {
+        const content = await readFile(join(tasksDir, file), 'utf-8');
+        const task = JSON.parse(content) as Task;
+        if (!task.id || !task.subject) {
+          logger.warn(`Skipping invalid task file: ${file}`);
+          return null;
+        }
+        return task;
+      } catch (err) {
+        logger.warn(`Failed to parse task file: ${file}`);
+        return null;
       }
-      // Skip tasks whose subject is a team member name (these are member assignments, not real tasks)
-      if (memberNames.has(task.subject)) {
-        logger.debug(`Skipping member assignment task: ${task.subject}`);
-        continue;
-      }
-      tasks.push(task);
-    } catch (err) {
-      logger.warn(`Failed to parse task file: ${file}`);
+    }),
+  );
+  for (const task of parseResults) {
+    if (task) {
+      allParsed.push(task);
+      if (task.owner) ownerNames.add(task.owner);
     }
+  }
+
+  // Second pass: filter out member assignment tasks
+  const tasks: Task[] = [];
+  for (const task of allParsed) {
+    // Skip tasks whose subject is a team member name from config
+    if (memberNames.has(task.subject)) {
+      logger.debug(`Skipping member assignment task (config match): ${task.subject}`);
+      continue;
+    }
+    // Skip tasks whose subject matches another task's owner (member assignment pattern)
+    if (ownerNames.has(task.subject)) {
+      logger.debug(`Skipping member assignment task (owner match): ${task.subject}`);
+      continue;
+    }
+    // Skip tasks whose description matches role assignment prompt patterns
+    if (task.description && roleAssignmentPatterns.some(p => p.test(task.description))) {
+      logger.debug(`Skipping role assignment task: ${task.subject}`);
+      continue;
+    }
+    tasks.push(task);
   }
 
   return tasks;
@@ -94,8 +130,13 @@ export async function readAllTasks(): Promise<Map<string, Task[]>> {
   const teamNames = await listTeamNames();
   const result = new Map<string, Task[]>();
 
-  for (const teamName of teamNames) {
-    const tasks = await readTeamTasks(teamName);
+  const entries = await Promise.all(
+    teamNames.map(async (teamName) => {
+      const tasks = await readTeamTasks(teamName);
+      return { teamName, tasks };
+    }),
+  );
+  for (const { teamName, tasks } of entries) {
     if (tasks.length > 0) {
       result.set(teamName, tasks);
     }

@@ -424,6 +424,41 @@ export async function deleteProject(projectId: string): Promise<void> {
 }
 
 /**
+ * Get the default branch HEAD OID (SHA) for a repository.
+ */
+export async function getDefaultBranchOid(owner: string, name: string): Promise<{ oid: string; branchName: string }> {
+  return withRetry(async () => {
+    const data = await runGraphQL(`
+      query($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) {
+          defaultBranchRef {
+            name
+            target { oid }
+          }
+        }
+      }
+    `, { owner, name });
+    const ref = data.repository.defaultBranchRef;
+    return { oid: ref.target.oid, branchName: ref.name };
+  }, 'Get default branch OID');
+}
+
+/**
+ * Create a branch (git ref) in a repository.
+ */
+export async function createBranch(repositoryId: string, branchName: string, oid: string): Promise<void> {
+  await withRetry(async () => {
+    await runGraphQL(`
+      mutation($repositoryId: ID!, $name: String!, $oid: GitObjectID!) {
+        createRef(input: { repositoryId: $repositoryId, name: $name, oid: $oid }) {
+          ref { id }
+        }
+      }
+    `, { repositoryId, name: `refs/heads/${branchName}`, oid });
+  }, `Create branch "${branchName}"`);
+}
+
+/**
  * Archive a project item
  */
 export async function archiveItem(projectId: string, itemId: string): Promise<void> {

@@ -8,6 +8,7 @@ export interface ItemMapping {
   lastHash: string;
   lastSyncedAt: string;
   lastOwner?: string;
+  branchName?: string;
 }
 
 export interface SyncStateData {

@@ -12,7 +12,7 @@ export function mapTitle(task: Task): string {
 /**
  * Generate the body for a GitHub draft issue from a task
  */
-export function mapBody(task: Task, teamName: string): string {
+export function mapBody(task: Task, teamName: string, branchName?: string): string {
   const lines: string[] = [];
 
   if (task.description) {
@@ -36,6 +36,9 @@ export function mapBody(task: Task, teamName: string): string {
   }
   if (task.blocks && task.blocks.length > 0) {
     lines.push(`**Blocks:** ${task.blocks.join(', ')}`);
+  }
+  if (branchName) {
+    lines.push(`**Branch:** \`${branchName}\``);
   }
 
   return lines.join('\n');
