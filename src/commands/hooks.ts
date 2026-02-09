@@ -6,8 +6,13 @@ import { logger } from '../utils/logger.js';
 
 const HOOK_ENTRY = {
   matcher: 'TaskCreate|TaskUpdate',
-  command: 'ccteams sync --quiet',
-  async: true,
+  hooks: [
+    {
+      type: 'command',
+      command: 'ccteams sync --quiet',
+      async: true,
+    },
+  ],
 };
 
 function getSettingsPath(local: boolean): string {
@@ -40,11 +45,15 @@ async function writeSettings(path: string, settings: Record<string, any>): Promi
 }
 
 function isCcteamsHook(hook: any): boolean {
-  return (
-    hook &&
-    typeof hook.command === 'string' &&
-    hook.command.startsWith('ccteams')
-  );
+  if (!hook) return false;
+  // New format: { matcher, hooks: [{ type, command }] }
+  if (Array.isArray(hook.hooks)) {
+    return hook.hooks.some(
+      (h: any) => typeof h.command === 'string' && h.command.startsWith('ccteams'),
+    );
+  }
+  // Old format fallback: { matcher, command }
+  return typeof hook.command === 'string' && hook.command.startsWith('ccteams');
 }
 
 export async function hooksInstallCommand(options: { local?: boolean }): Promise<void> {
