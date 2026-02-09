@@ -4,39 +4,21 @@ import { createInitialSyncState, saveSyncState } from '../core/sync-state.js';
 import { CUSTOM_FIELDS } from '../constants.js';
 import { logger } from '../utils/logger.js';
 
-export async function initCommand(options: { owner?: string; title?: string; repo?: string }): Promise<void> {
-  // Check gh auth
-  const isAuthed = await checkGhAuth();
-  if (!isAuthed) {
-    process.exit(1);
-  }
-
-  const hasScope = await checkProjectScope();
-  if (!hasScope) {
-    process.exit(1);
-  }
-
-  // Repo is required
-  if (!options.repo) {
-    logger.error('--repo <owner/repo> is required. Example: ccteams init --repo myuser/myrepo');
-    process.exit(1);
-  }
-
-  // Parse repo
-  const repoParts = options.repo.split('/');
-  if (repoParts.length !== 2 || !repoParts[0] || !repoParts[1]) {
-    logger.error('Invalid --repo format. Use owner/repo (e.g., myuser/myrepo)');
-    process.exit(1);
-  }
-  const [repoOwner, repoName] = repoParts;
-
-  // Get owner (defaults to repo owner)
-  const owner = options.owner ?? repoOwner;
+/**
+ * Core init logic — reusable from both `ccteams init` and `autoCommand`.
+ */
+export async function performInit(options: {
+  repoOwner: string;
+  repoName: string;
+  owner?: string;
+  title?: string;
+}): Promise<void> {
+  const owner = options.owner ?? options.repoOwner;
   logger.info(`Using owner: ${owner}`);
 
   // Get repo ID
-  logger.info(`Looking up repository: ${repoOwner}/${repoName}`);
-  const repositoryId = await getRepoId(repoOwner, repoName);
+  logger.info(`Looking up repository: ${options.repoOwner}/${options.repoName}`);
+  const repositoryId = await getRepoId(options.repoOwner, options.repoName);
 
   // Get owner node ID
   const ownerId = await getOwnerNodeId(owner);
@@ -48,7 +30,7 @@ export async function initCommand(options: { owner?: string; title?: string; rep
   project.owner = owner;
 
   // Link project to repository
-  logger.info(`Linking project to repository: ${repoOwner}/${repoName}`);
+  logger.info(`Linking project to repository: ${options.repoOwner}/${options.repoName}`);
   await linkProjectToRepo(project.id, repositoryId);
 
   // Create custom fields
@@ -102,16 +84,51 @@ export async function initCommand(options: { owner?: string; title?: string; rep
     statusOptions,
     {
       id: repositoryId,
-      owner: repoOwner,
-      name: repoName,
+      owner: options.repoOwner,
+      name: options.repoName,
     },
   );
   await saveSyncState(state);
 
   logger.success(`Project created successfully!`);
   logger.info(`URL: ${project.url}`);
-  logger.info(`Repository: ${repoOwner}/${repoName} (linked)`);
+  logger.info(`Repository: ${options.repoOwner}/${options.repoName} (linked)`);
   logger.info(`Sync state saved to .ccteams-sync.json`);
+}
+
+export async function initCommand(options: { owner?: string; title?: string; repo?: string }): Promise<void> {
+  // Check gh auth
+  const isAuthed = await checkGhAuth();
+  if (!isAuthed) {
+    process.exit(1);
+  }
+
+  const hasScope = await checkProjectScope();
+  if (!hasScope) {
+    process.exit(1);
+  }
+
+  // Repo is required
+  if (!options.repo) {
+    logger.error('--repo <owner/repo> is required. Example: ccteams init --repo myuser/myrepo');
+    process.exit(1);
+  }
+
+  // Parse repo
+  const repoParts = options.repo.split('/');
+  if (repoParts.length !== 2 || !repoParts[0] || !repoParts[1]) {
+    logger.error('Invalid --repo format. Use owner/repo (e.g., myuser/myrepo)');
+    process.exit(1);
+  }
+  const [repoOwner, repoName] = repoParts;
+
+  await performInit({
+    repoOwner,
+    repoName,
+    owner: options.owner,
+    title: options.title,
+  });
+
   logger.dim(`\nNext steps:`);
   logger.dim(`  1. Run 'ccteams sync' to sync your tasks as real Issues.`);
   logger.dim(`  2. In GitHub Project settings, switch to Board layout for kanban view.`);

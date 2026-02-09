@@ -394,6 +394,21 @@ export async function updateSingleSelectField(projectId: string, itemId: string,
 }
 
 /**
+ * Delete a GitHub Project V2
+ */
+export async function deleteProject(projectId: string): Promise<void> {
+  await withRetry(async () => {
+    await runGraphQL(`
+      mutation($projectId: ID!) {
+        deleteProjectV2(input: { projectId: $projectId }) {
+          projectV2 { id }
+        }
+      }
+    `, { projectId });
+  }, 'Delete project');
+}
+
+/**
  * Archive a project item
  */
 export async function archiveItem(projectId: string, itemId: string): Promise<void> {

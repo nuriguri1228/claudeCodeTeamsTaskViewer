@@ -17,6 +17,8 @@ import {
 } from './github-project.js';
 import { runGraphQL } from '../utils/gh-auth.js';
 import { logger } from '../utils/logger.js';
+import { withLock } from '../utils/lock.js';
+import { getLockFilePath } from '../utils/paths.js';
 
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
@@ -206,6 +208,8 @@ export async function syncTasks(options: {
   dryRun?: boolean;
   quiet?: boolean;
 }): Promise<SyncResult> {
+  return withLock(getLockFilePath(), async () => {
+  // loadSyncState() must be called inside the lock to read the latest state
   const state = await loadSyncState();
   if (!state) {
     throw new Error('Sync state not found. Run `ccteams init` first.');
@@ -443,4 +447,5 @@ export async function syncTasks(options: {
   }
 
   return result;
+  }); // end withLock
 }

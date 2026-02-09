@@ -24,3 +24,7 @@ export function getTeamTasksDir(teamName: string): string {
 export function getSyncFilePath(): string {
   return join(process.cwd(), '.ccteams-sync.json');
 }
+
+export function getLockFilePath(): string {
+  return join(process.cwd(), '.ccteams-sync.lock');
+}

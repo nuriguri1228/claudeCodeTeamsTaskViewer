@@ -4,6 +4,8 @@ import { syncCommand } from './commands/sync.js';
 import { watchCommand } from './commands/watch.js';
 import { hooksInstallCommand, hooksUninstallCommand } from './commands/hooks.js';
 import { statusCommand } from './commands/status.js';
+import { resetCommand } from './commands/reset.js';
+import { autoCommand } from './commands/auto.js';
 
 const program = new Command();
 
@@ -11,6 +13,11 @@ program
   .name('ccteams')
   .description('Claude Code Teams Task Viewer')
   .version('0.1.0');
+
+// Default action: auto-init + sync
+program.action(async () => {
+  await autoCommand();
+});
 
 program
   .command('init')
@@ -66,6 +73,14 @@ program
   .description('Show current sync status overview')
   .action(async () => {
     await statusCommand();
+  });
+
+program
+  .command('reset')
+  .description('Close all tracked issues, delete the GitHub Project, and remove sync state')
+  .option('--force', 'Skip confirmation prompt')
+  .action(async (opts) => {
+    await resetCommand({ force: opts.force });
   });
 
 export function main(): void {

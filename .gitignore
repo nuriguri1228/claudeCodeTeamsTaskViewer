@@ -1,4 +1,5 @@
 node_modules
 dist
 .ccteams-sync.json
+.ccteams-sync.lock
 *.tgz
