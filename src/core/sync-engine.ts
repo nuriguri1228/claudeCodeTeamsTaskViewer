@@ -1,29 +1,26 @@
-import { exec as execCb } from 'node:child_process';
-import { promisify } from 'node:util';
 import { Task } from '../types/claude.js';
 import { SyncResult, SyncStateData } from '../types/sync.js';
 import { readTeamTasks, readAllTasks } from './claude-reader.js';
-import { loadSyncState, saveSyncState, findMapping, upsertMapping, removeMapping } from './sync-state.js';
+import { loadSyncState, saveSyncState, findMapping, upsertMapping } from './sync-state.js';
 import { mapTitle, mapBody, mapStatus, mapCustomFields, computeTaskHash } from './field-mapper.js';
 import {
   createIssue,
   updateIssue,
-  closeIssue,
   addProjectV2ItemById,
   updateTextField,
   updateSingleSelectField,
-  archiveItem,
   createLabel,
   updateFieldOptions,
   getProjectFields,
+  getDefaultBranchOid,
+  ensureBranchLinkedToIssue,
+  ensureLabelsOnIssue,
 } from './github-project.js';
 import { runGraphQL } from '../utils/gh-auth.js';
 import { logger } from '../utils/logger.js';
 import { withLock } from '../utils/lock.js';
 import { getLockFilePath } from '../utils/paths.js';
 import { pMap } from '../utils/concurrency.js';
-
-const execAsync = promisify(execCb);
 
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
@@ -110,7 +107,7 @@ async function ensureOwnerOptions(state: SyncStateData, allTasks: Map<string, { 
   if (!ownerFieldId) return false;
   if (!state.ownerOptions) state.ownerOptions = {};
 
-  // Collect all unique owner names
+  // Collect all unique owner names from tasks
   const ownerNames = new Set<string>();
   for (const { task } of allTasks.values()) {
     if (task.owner) ownerNames.add(task.owner);
@@ -167,16 +164,19 @@ async function setAllFields(
   }
 
   // Agent (Owner) as single-select
-  // Use task.owner if present, otherwise fall back to effectiveOwner (lastOwner)
-  // Owner options are pre-registered by ensureOwnerOptions before any parallel task processing.
+  // Use task.owner if present, otherwise fall back to effectiveOwner (lastOwner).
+  // If still empty, use "(unassigned)" only when that option already exists in the project.
   const ownerName = task.owner || effectiveOwner;
-  if (ownerName) {
+  {
+    const resolvedOwner = ownerName || (state.ownerOptions?.['(unassigned)'] ? '(unassigned)' : '');
     const ownerFieldId = state.fields['Agent (Owner)'];
-    const ownerOptionId = state.ownerOptions?.[ownerName];
-    if (ownerFieldId && ownerOptionId) {
-      fieldUpdates.push(updateSingleSelectField(projectId, itemId, ownerFieldId, ownerOptionId));
-    } else if (ownerFieldId && !ownerOptionId) {
-      logger.warn(`Owner option "${ownerName}" not found in cache, skipping (will be set on next sync)`);
+    if (resolvedOwner && ownerFieldId) {
+      const ownerOptionId = state.ownerOptions?.[resolvedOwner];
+      if (ownerOptionId) {
+        fieldUpdates.push(updateSingleSelectField(projectId, itemId, ownerFieldId, ownerOptionId));
+      } else {
+        logger.warn(`Owner option "${resolvedOwner}" not found in cache, skipping (will be set on next sync)`);
+      }
     }
   }
 
@@ -490,6 +490,12 @@ export async function syncTasks(options: {
       // Update the real issue
       if (item.issueNodeId) {
         await updateIssue(item.issueNodeId, title, body);
+
+        // Ensure label is applied (may have been missed on initial creation)
+        try {
+          const labelId = await ensureTeamLabel(state!, teamName);
+          await ensureLabelsOnIssue(item.issueNodeId, [labelId]);
+        } catch { /* best effort */ }
       }
 
       // Update project item custom fields
@@ -514,42 +520,9 @@ export async function syncTasks(options: {
     }
   }, 5);
 
-  // Collect items to archive
-  const archiveEntries = scopedItems.filter(item => {
-    const key = `${item.teamName}:${item.taskId}`;
-    return !currentTasks.has(key);
-  });
-
-  if (options.dryRun) {
-    for (const item of archiveEntries) {
-      if (!options.quiet) logger.info(`[dry-run] Would archive: ${item.teamName}:${item.taskId}`);
-      result.archived++;
-    }
-  } else {
-    // Archive/delete in parallel (concurrency limit 5)
-    await pMap(archiveEntries, async (item) => {
-      try {
-        // Close the real issue
-        if (item.issueNodeId) {
-          await closeIssue(item.issueNodeId);
-        }
-
-        // Archive the project item
-        if (item.githubItemId) {
-          await archiveItem(state!.project.id, item.githubItemId);
-        }
-
-        removeMapping(state!, item.taskId, item.teamName);
-
-        result.archived++;
-        if (!options.quiet) logger.success(`Archived: ${item.teamName}:${item.taskId}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        result.errors.push({ taskId: item.taskId, error: message });
-        logger.error(`Failed to archive ${item.teamName}:${item.taskId}: ${message}`);
-      }
-    }, 5);
-  }
+  // Note: Issues whose tasks have been removed from disk are intentionally
+  // kept open so that historical records remain visible on the project board.
+  // Use `ccteams close` or `ccteams reset` to explicitly close/archive issues.
 
   // Create/update team summary issue with branch link
   if (!options.dryRun) {
@@ -579,15 +552,13 @@ async function createTeamSummary(
 ): Promise<void> {
   if (!state.summaryIssues) state.summaryIssues = {};
 
-  // 1. Push current HEAD to remote branch
+  // 1. Get OID for branch creation (done after issue exists)
   const branchName = `ccteams/${teamName}`;
-  let branchPushed = false;
+  let branchOid = '';
   try {
-    await execAsync(`git push origin HEAD:refs/heads/${branchName} --force`);
-    branchPushed = true;
-    if (!quiet) logger.info(`Pushed branch: ${branchName}`);
+    branchOid = await getDefaultBranchOid(state.repository.owner, state.repository.name);
   } catch {
-    logger.warn(`Could not push branch "${branchName}" to remote, skipping branch link`);
+    logger.warn(`Could not get default branch OID, skipping branch creation`);
   }
 
   // 2. Build summary body
@@ -595,7 +566,7 @@ async function createTeamSummary(
   const lines: string[] = [];
   lines.push(`## ${teamName}`);
   lines.push('');
-  if (branchPushed) {
+  if (branchOid) {
     lines.push(`**Branch:** [\`${branchName}\`](${branchUrl})`);
   }
   lines.push(`**Last Synced:** ${new Date().toISOString()}`);
@@ -612,16 +583,36 @@ async function createTeamSummary(
   const title = `[ccteams] ${teamName} — Work Summary`;
   const body = lines.join('\n');
 
-  // 3. Create or update summary issue
+  // 3. Create or update summary issue, then link branch
+  let labelId: string | undefined;
+  try { labelId = await ensureTeamLabel(state, teamName); } catch { /* skip */ }
+
   const existing = state.summaryIssues[teamName];
   try {
+    let issueNodeId: string;
+
+    let summaryItemId: string | undefined;
+
     if (existing) {
-      await updateIssue(existing.issueNodeId, title, body);
+      issueNodeId = existing.issueNodeId;
+      summaryItemId = existing.githubItemId;
+      await updateIssue(issueNodeId, title, body);
+
+      // Ensure label is applied (may have been missed on initial creation)
+      if (labelId) {
+        try { await ensureLabelsOnIssue(issueNodeId, [labelId]); } catch { /* best effort */ }
+      }
+
+      // Recover githubItemId if missing (e.g. upgraded from older sync state)
+      if (!summaryItemId) {
+        try {
+          summaryItemId = await addProjectV2ItemById(state.project.id, issueNodeId);
+          existing.githubItemId = summaryItemId;
+        } catch { /* best effort */ }
+      }
+
       if (!quiet) logger.success(`Updated summary: ${title} (#${existing.issueNumber})`);
     } else {
-      let labelId: string | undefined;
-      try { labelId = await ensureTeamLabel(state, teamName); } catch { /* skip */ }
-
       const issue = await createIssue({
         repositoryId: state.repository.id,
         title,
@@ -629,20 +620,50 @@ async function createTeamSummary(
         labelIds: labelId ? [labelId] : undefined,
         projectIds: [state.project.id],
       });
+      issueNodeId = issue.id;
 
       try {
-        const itemId = await addProjectV2ItemById(state.project.id, issue.id);
+        summaryItemId = await addProjectV2ItemById(state.project.id, issue.id);
         const teamFieldId = state.fields['Team Name'];
         if (teamFieldId) {
-          await updateTextField(state.project.id, itemId, teamFieldId, teamName);
+          await updateTextField(state.project.id, summaryItemId, teamFieldId, teamName);
         }
       } catch { /* best effort */ }
 
       state.summaryIssues[teamName] = {
         issueNodeId: issue.id,
         issueNumber: issue.number,
+        githubItemId: summaryItemId,
       };
       if (!quiet) logger.success(`Created summary: ${title} (#${issue.number})`);
+    }
+
+    // 4. Set summary Status based on task completion
+    if (summaryItemId) {
+      const allDone = tasks.length > 0 && tasks.every(t => t.status === 'completed');
+      const anyInProgress = tasks.some(t => t.status === 'in_progress');
+      const summaryStatus = allDone ? 'Done' : anyInProgress ? 'In Progress' : 'Todo';
+
+      const statusFieldId = state.fields['Status'];
+      const statusOptionId = state.statusOptions[summaryStatus];
+      if (statusFieldId && statusOptionId) {
+        try {
+          await updateSingleSelectField(state.project.id, summaryItemId, statusFieldId, statusOptionId);
+        } catch { /* best effort */ }
+      }
+    }
+
+    // 4. Ensure branch exists AND is linked to the summary issue
+    if (branchOid) {
+      try {
+        await ensureBranchLinkedToIssue(
+          state.repository.owner, state.repository.name,
+          state.repository.id, issueNodeId, branchName, branchOid,
+        );
+        if (!quiet) logger.info(`Linked branch: ${branchName}`);
+      } catch {
+        logger.warn(`Could not link branch "${branchName}" to summary issue`);
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

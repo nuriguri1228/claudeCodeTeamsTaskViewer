@@ -1,4 +1,4 @@
-import { runGraphQL } from '../utils/gh-auth.js';
+import { runGraphQL, runREST } from '../utils/gh-auth.js';
 import { withRetry } from '../utils/retry.js';
 import { ProjectInfo, ProjectField, SingleSelectOption, StatusFieldInfo, CreatedIssue } from '../types/github.js';
 
@@ -436,4 +436,154 @@ export async function archiveItem(projectId: string, itemId: string): Promise<vo
       }
     `, { projectId, itemId });
   }, 'Archive item');
+}
+
+/**
+ * Get the OID (commit SHA) of the repository's default branch.
+ * If the repo is empty (no commits), initializes it with a README via the Contents API.
+ */
+export async function getDefaultBranchOid(owner: string, name: string): Promise<string> {
+  return withRetry(async () => {
+    const data = await runGraphQL(`
+      query($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) {
+          defaultBranchRef { target { oid } }
+        }
+      }
+    `, { owner, name });
+
+    const oid = data.repository.defaultBranchRef?.target?.oid;
+    if (oid) return oid;
+
+    // Empty repo — initialize via Contents API (creates default branch + initial commit)
+    const readme = Buffer.from('# ccteams\n\nThis repository is managed by ccteams.\n').toString('base64');
+    const result = await runREST(`repos/${owner}/${name}/contents/README.md`, 'PUT', {
+      message: 'Initialize repository (ccteams)',
+      content: readme,
+    });
+    return result.commit.sha;
+  }, 'Get default branch OID');
+}
+
+/**
+ * Ensure a branch exists on the remote, creating or updating it via GraphQL API.
+ */
+export async function ensureBranch(
+  owner: string, name: string, repositoryId: string, branchName: string, oid: string,
+): Promise<void> {
+  await withRetry(async () => {
+    // 1) Check if ref already exists
+    const data = await runGraphQL(`
+      query($owner: String!, $name: String!, $qualifiedName: String!) {
+        repository(owner: $owner, name: $name) {
+          ref(qualifiedName: $qualifiedName) { id }
+        }
+      }
+    `, { owner, name, qualifiedName: `refs/heads/${branchName}` });
+
+    const refId = data.repository.ref?.id;
+    if (refId) {
+      // 2a) Exists — update ref (force)
+      await runGraphQL(`
+        mutation($refId: ID!, $oid: GitObjectID!, $force: Boolean) {
+          updateRef(input: { refId: $refId, oid: $oid, force: $force }) { ref { id } }
+        }
+      `, { refId, oid, force: true });
+    } else {
+      // 2b) Does not exist — create ref
+      await runGraphQL(`
+        mutation($repositoryId: ID!, $refName: String!, $oid: GitObjectID!) {
+          createRef(input: { repositoryId: $repositoryId, name: $refName, oid: $oid }) { ref { id } }
+        }
+      `, { repositoryId, refName: `refs/heads/${branchName}`, oid });
+    }
+  }, `Ensure branch "${branchName}"`);
+}
+
+/**
+ * Ensure a branch exists AND is linked to an issue via GitHub's Development panel.
+ *
+ * `createLinkedBranch` only works when both:
+ *   - the git ref doesn't already exist
+ *   - the issue has no dangling linked-branch records for that ref
+ *
+ * So we must clean up both before calling the mutation.
+ */
+export async function ensureBranchLinkedToIssue(
+  owner: string, repoName: string, repositoryId: string,
+  issueId: string, branchName: string, oid: string,
+): Promise<void> {
+  await withRetry(async () => {
+    const qualifiedName = `refs/heads/${branchName}`;
+
+    // 1. Delete any existing linked-branch records on this issue
+    //    (including dangling ones where ref is null).
+    const lbData = await runGraphQL(`
+      query($issueId: ID!) {
+        node(id: $issueId) {
+          ... on Issue {
+            linkedBranches(first: 20) {
+              nodes { id ref { name } }
+            }
+          }
+        }
+      }
+    `, { issueId });
+
+    const linkedBranches = lbData.node?.linkedBranches?.nodes ?? [];
+    for (const lb of linkedBranches) {
+      // Delete dangling (ref:null) or same-name linked branches
+      if (!lb.ref || lb.ref.name === branchName) {
+        try {
+          await runGraphQL(`
+            mutation($id: ID!) {
+              deleteLinkedBranch(input: { linkedBranchId: $id }) { issue { id } }
+            }
+          `, { id: lb.id });
+        } catch { /* best effort */ }
+      }
+    }
+
+    // 2. Delete the git ref if it already exists
+    const refData = await runGraphQL(`
+      query($owner: String!, $name: String!, $qualifiedName: String!) {
+        repository(owner: $owner, name: $name) {
+          ref(qualifiedName: $qualifiedName) { id }
+        }
+      }
+    `, { owner, name: repoName, qualifiedName });
+
+    if (refData.repository.ref?.id) {
+      await runGraphQL(`
+        mutation($refId: ID!) {
+          deleteRef(input: { refId: $refId }) { clientMutationId }
+        }
+      `, { refId: refData.repository.ref.id });
+    }
+
+    // 3. Create branch + link in one atomic operation
+    await runGraphQL(`
+      mutation($issueId: ID!, $repositoryId: ID!, $oid: GitObjectID!, $name: String!) {
+        createLinkedBranch(input: { issueId: $issueId, repositoryId: $repositoryId, oid: $oid, name: $name }) {
+          linkedBranch { id }
+        }
+      }
+    `, { issueId, repositoryId, oid, name: qualifiedName });
+  }, `Ensure branch "${branchName}" linked to issue`);
+}
+
+/**
+ * Add labels to an issue that may be missing them (idempotent).
+ */
+export async function ensureLabelsOnIssue(issueId: string, labelIds: string[]): Promise<void> {
+  if (labelIds.length === 0) return;
+  await withRetry(async () => {
+    await runGraphQL(`
+      mutation($labelableId: ID!, $labelIds: [ID!]!) {
+        addLabelsToLabelable(input: { labelableId: $labelableId, labelIds: $labelIds }) {
+          labelable { __typename }
+        }
+      }
+    `, { labelableId: issueId, labelIds });
+  }, 'Ensure labels on issue');
 }

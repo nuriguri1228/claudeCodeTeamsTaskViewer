@@ -37,6 +37,43 @@ export async function getAuthenticatedUser(): Promise<string> {
   return data.data.viewer.login;
 }
 
+export async function runREST(endpoint: string, method?: string, body?: unknown): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const args = ['api', endpoint];
+    if (method) args.push('-X', method);
+    if (body) args.push('--input', '-');
+
+    const proc = spawn('gh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+    proc.on('close', (code: number | null) => {
+      if (code !== 0) {
+        reject(new Error(stderr || `gh exited with code ${code}`));
+        return;
+      }
+      try {
+        resolve(stdout ? JSON.parse(stdout) : null);
+      } catch {
+        reject(new Error(`Failed to parse REST response: ${stdout}`));
+      }
+    });
+
+    proc.on('error', reject);
+
+    if (body) {
+      proc.stdin.write(JSON.stringify(body));
+      proc.stdin.end();
+    } else {
+      proc.stdin.end();
+    }
+  });
+}
+
 export async function runGraphQL(query: string, variables?: Record<string, unknown>): Promise<any> {
   const body = JSON.stringify({
     query,

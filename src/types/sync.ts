@@ -28,7 +28,7 @@ export interface SyncStateData {
   ownerOptions: Record<string, string>;  // owner name -> option ID
   labels: Record<string, string>;  // label name -> label ID
   items: ItemMapping[];
-  summaryIssues?: Record<string, { issueNodeId: string; issueNumber: number }>;
+  summaryIssues?: Record<string, { issueNodeId: string; issueNumber: number; githubItemId?: string }>;
   lastSyncAt: string;
 }
 
