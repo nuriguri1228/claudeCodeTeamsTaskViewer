@@ -5,13 +5,15 @@ import { CUSTOM_FIELDS } from '../constants.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Core init logic — reusable from both `ccteams init` and `autoCommand`.
+ * Core init logic — reusable from both `ccteams init` and `autoInitTeam`.
+ * When teamName is provided, saves the sync state to a per-team file.
  */
 export async function performInit(options: {
   repoOwner: string;
   repoName: string;
   owner?: string;
   title?: string;
+  teamName?: string;
 }): Promise<void> {
   const owner = options.owner ?? options.repoOwner;
   logger.info(`Using owner: ${owner}`);
@@ -88,15 +90,18 @@ export async function performInit(options: {
       name: options.repoName,
     },
   );
-  await saveSyncState(state);
+  if (!options.teamName) {
+    throw new Error('teamName is required for performInit');
+  }
+  await saveSyncState(state, options.teamName);
 
   logger.success(`Project created successfully!`);
   logger.info(`URL: ${project.url}`);
   logger.info(`Repository: ${options.repoOwner}/${options.repoName} (linked)`);
-  logger.info(`Sync state saved to .ccteams-sync.json`);
+  logger.info(`Sync state saved to .ccteams-sync.${options.teamName}.json`);
 }
 
-export async function initCommand(options: { owner?: string; title?: string; repo?: string }): Promise<void> {
+export async function initCommand(options: { owner?: string; title?: string; repo?: string; team?: string }): Promise<void> {
   // Check gh auth
   const isAuthed = await checkGhAuth();
   if (!isAuthed) {
@@ -122,11 +127,17 @@ export async function initCommand(options: { owner?: string; title?: string; rep
   }
   const [repoOwner, repoName] = repoParts;
 
+  if (!options.team) {
+    logger.error('--team <teamName> is required. Example: ccteams init --repo myuser/myrepo --team my-team');
+    process.exit(1);
+  }
+
   await performInit({
     repoOwner,
     repoName,
     owner: options.owner,
     title: options.title,
+    teamName: options.team,
   });
 
   logger.dim(`\nNext steps:`);

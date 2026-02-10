@@ -14,9 +14,6 @@ export const CUSTOM_FIELDS = [
   { name: 'Active Form', dataType: 'TEXT' as const },
 ];
 
-// Default sync file name
-export const SYNC_FILE = '.ccteams-sync.json';
-
 // Default debounce interval for watch mode (ms)
 export const DEFAULT_DEBOUNCE_MS = 1000;
 

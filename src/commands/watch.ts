@@ -1,17 +1,11 @@
 import chokidar from 'chokidar';
-import { loadSyncState } from '../core/sync-state.js';
 import { syncTasks } from '../core/sync-engine.js';
+import { listTeamNames } from '../core/claude-reader.js';
 import { getTasksDir, getTeamTasksDir } from '../utils/paths.js';
 import { DEFAULT_DEBOUNCE_MS } from '../constants.js';
 import { logger } from '../utils/logger.js';
 
 export async function watchCommand(options: { team?: string; debounce?: number }): Promise<void> {
-  const state = await loadSyncState();
-  if (!state) {
-    logger.error('Sync state not found. Run `ccteams init` first.');
-    process.exit(1);
-  }
-
   const debounceMs = options.debounce ?? DEFAULT_DEBOUNCE_MS;
   const watchPath = options.team ? getTeamTasksDir(options.team) : getTasksDir();
 
@@ -27,15 +21,35 @@ export async function watchCommand(options: { team?: string; debounce?: number }
     isSyncing = true;
     try {
       logger.info('Changes detected, syncing...');
-      const result = await syncTasks({
-        teamName: options.team,
-        quiet: false,
-      });
+
+      // Determine which teams to sync
+      let teamNames: string[];
+      if (options.team) {
+        teamNames = [options.team];
+      } else {
+        teamNames = await listTeamNames();
+      }
+
+      let totalCreated = 0, totalUpdated = 0, totalArchived = 0, totalSkipped = 0;
+      const allErrors: Array<{ taskId: string; error: string }> = [];
+
+      for (const teamName of teamNames) {
+        const result = await syncTasks({
+          teamName,
+          quiet: false,
+        });
+        totalCreated += result.created;
+        totalUpdated += result.updated;
+        totalArchived += result.archived;
+        totalSkipped += result.skipped;
+        allErrors.push(...result.errors);
+      }
+
       logger.info(
-        `Sync complete: ${result.created} created, ${result.updated} updated, ${result.archived} archived, ${result.skipped} skipped`,
+        `Sync complete: ${totalCreated} created, ${totalUpdated} updated, ${totalArchived} archived, ${totalSkipped} skipped`,
       );
-      if (result.errors.length > 0) {
-        logger.warn(`${result.errors.length} error(s) during sync`);
+      if (allErrors.length > 0) {
+        logger.warn(`${allErrors.length} error(s) during sync`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

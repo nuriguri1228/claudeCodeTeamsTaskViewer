@@ -24,10 +24,11 @@ program
   .command('init')
   .description('Initialize a GitHub Project and sync state for ccteams')
   .requiredOption('--repo <owner/repo>', 'GitHub repository to link (e.g., myuser/myrepo)')
+  .requiredOption('--team <team>', 'Team name to initialize')
   .option('--owner <owner>', 'GitHub user or org to own the project (defaults to repo owner)')
-  .option('--title <title>', 'Project title (default: "Claude Code Teams Tasks")')
+  .option('--title <title>', 'Project title (default: "ccteams: <team>")')
   .action(async (opts) => {
-    await initCommand({ owner: opts.owner, title: opts.title, repo: opts.repo });
+    await initCommand({ owner: opts.owner, title: opts.title, repo: opts.repo, team: opts.team });
   });
 
 program
@@ -80,16 +81,18 @@ program
   .command('close')
   .description('Close all tracked issues and the GitHub Project (project is preserved on GitHub)')
   .option('--force', 'Skip confirmation prompt')
+  .option('--team <team>', 'Close only a specific team')
   .action(async (opts) => {
-    await closeCommand({ force: opts.force });
+    await closeCommand({ force: opts.force, team: opts.team });
   });
 
 program
   .command('reset')
   .description('Close all tracked issues, DELETE the GitHub Project, and remove sync state')
   .option('--force', 'Skip confirmation prompt')
+  .option('--team <team>', 'Reset only a specific team')
   .action(async (opts) => {
-    await resetCommand({ force: opts.force });
+    await resetCommand({ force: opts.force, team: opts.team });
   });
 
 export function main(): void {

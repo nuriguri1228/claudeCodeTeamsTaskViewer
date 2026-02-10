@@ -2,7 +2,7 @@ import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Task } from '../types/claude.js';
 import { SyncResult, SyncStateData } from '../types/sync.js';
-import { readTeamTasks, readAllTasks, readTeamConfig } from './claude-reader.js';
+import { readTeamTasks, readTeamConfig } from './claude-reader.js';
 import { loadSyncState, saveSyncState, findMapping, upsertMapping } from './sync-state.js';
 import { mapTitle, mapBody, mapStatus, mapCustomFields, computeTaskHash } from './field-mapper.js';
 import {
@@ -283,29 +283,32 @@ function sortByDependency(entries: Array<{ task: Task; teamName: string }>): Arr
 }
 
 /**
- * Core sync algorithm: reads tasks from disk, compares to sync state,
+ * Core sync algorithm: reads tasks for a single team, compares to its sync state,
  * and creates/updates/archives real GitHub Issues in the linked repository.
+ * teamName is required — each team has its own sync state and lock.
  */
 export async function syncTasks(options: {
-  teamName?: string;
+  teamName: string;
   dryRun?: boolean;
   quiet?: boolean;
 }): Promise<SyncResult> {
-  return withLock(getLockFilePath(), async () => {
+  const teamName = options.teamName;
+
+  return withLock(getLockFilePath(teamName), async () => {
   // loadSyncState() must be called inside the lock to read the latest state
-  let state = await loadSyncState();
+  let state = await loadSyncState(teamName);
   if (!state) {
     // Auto-init under lock to prevent duplicate project creation
-    const { autoInit } = await import('../commands/auto.js');
-    await autoInit();
-    state = await loadSyncState();
+    const { autoInitTeam } = await import('../commands/auto.js');
+    await autoInitTeam(teamName);
+    state = await loadSyncState(teamName);
     if (!state) {
-      throw new Error('Auto-init failed. Run `ccteams init --repo <owner/repo>` manually.');
+      throw new Error(`Auto-init failed for team "${teamName}". Run \`ccteams init --repo <owner/repo> --team ${teamName}\` manually.`);
     }
   }
 
   if (!state.repository?.id) {
-    throw new Error('Repository not configured. Run `ccteams init --repo <owner/repo>` to set up.');
+    throw new Error('Repository not configured. Run `ccteams init --repo <owner/repo> --team <team>` to set up.');
   }
 
   const result: SyncResult = {
@@ -319,32 +322,25 @@ export async function syncTasks(options: {
   const repoUrl = `https://github.com/${state.repository.owner}/${state.repository.name}`;
   const defaultCwd = process.cwd();
 
-  // Collect tasks by team
-  let tasksByTeam: Map<string, Task[]>;
-  if (options.teamName) {
-    const tasks = await readTeamTasks(options.teamName);
-    tasksByTeam = new Map();
-    if (tasks.length > 0) {
-      tasksByTeam.set(options.teamName, tasks);
-    }
-  } else {
-    tasksByTeam = await readAllTasks();
+  // Read tasks for this team only
+  const tasks = await readTeamTasks(teamName);
+  const tasksByTeam = new Map<string, Task[]>();
+  if (tasks.length > 0) {
+    tasksByTeam.set(teamName, tasks);
   }
 
-  // Read team configs and build member-to-cwd maps for per-agent git info
+  // Read team config and build member-to-cwd map for per-agent git info
   const memberCwdsByTeam = new Map<string, Map<string, string>>();
-  for (const teamName of tasksByTeam.keys()) {
-    const config = await readTeamConfig(teamName);
-    if (config) {
-      const cwdMap = new Map<string, string>();
-      for (const member of config.members) {
-        if (member.cwd) {
-          cwdMap.set(member.name, member.cwd);
-        }
+  const config = await readTeamConfig(teamName);
+  if (config) {
+    const cwdMap = new Map<string, string>();
+    for (const member of config.members) {
+      if (member.cwd) {
+        cwdMap.set(member.name, member.cwd);
       }
-      if (cwdMap.size > 0) {
-        memberCwdsByTeam.set(teamName, cwdMap);
-      }
+    }
+    if (cwdMap.size > 0) {
+      memberCwdsByTeam.set(teamName, cwdMap);
     }
   }
 
@@ -365,7 +361,7 @@ export async function syncTasks(options: {
   );
 
   // Helper to resolve per-task git options based on the task owner's cwd
-  function resolveTaskGitOptions(task: Task, teamName: string) {
+  function resolveTaskGitOptions(task: Task) {
     const ownerCwd = task.owner ? memberCwdsByTeam.get(teamName)?.get(task.owner) : undefined;
     const info = gitInfoByCwd.get(ownerCwd || defaultCwd);
     if (!info?.headSha) return undefined;
@@ -378,10 +374,10 @@ export async function syncTasks(options: {
 
   // Build a map of taskKey -> { task, teamName }
   const currentTasks = new Map<string, { task: Task; teamName: string }>();
-  for (const [teamName, tasks] of tasksByTeam) {
-    for (const task of tasks) {
-      const key = `${teamName}:${task.id}`;
-      currentTasks.set(key, { task, teamName });
+  for (const [tn, tks] of tasksByTeam) {
+    for (const task of tks) {
+      const key = `${tn}:${task.id}`;
+      currentTasks.set(key, { task, teamName: tn });
     }
   }
 
@@ -424,12 +420,10 @@ export async function syncTasks(options: {
     }
   }
 
-  // Determine which sync state items are in scope
-  const scopedItems = options.teamName
-    ? state.items.filter(item => item.teamName === options.teamName)
-    : [...state.items];
+  // All sync state items are in scope (single-team state)
+  const scopedItems = [...state.items];
 
-  // Build set of keys from sync state items in scope
+  // Build set of keys from sync state items
   const syncedKeys = new Set(scopedItems.map(item => `${item.teamName}:${item.taskId}`));
 
   // Collect new tasks (in currentTasks but not in sync state)
@@ -465,9 +459,9 @@ export async function syncTasks(options: {
   }
 
   // Helper to create a single issue
-  async function createSingleIssue(task: Task, teamName: string): Promise<void> {
+  async function createSingleIssue(task: Task, tn: string): Promise<void> {
     const title = mapTitle(task);
-    const body = mapBody(task, teamName, resolveTaskGitOptions(task, teamName));
+    const body = mapBody(task, tn, resolveTaskGitOptions(task));
 
     if (options.dryRun) {
       if (!options.quiet) logger.info(`[dry-run] Would create: ${title}`);
@@ -479,16 +473,16 @@ export async function syncTasks(options: {
       // Ensure team label exists
       let labelId: string | undefined;
       try {
-        labelId = await ensureTeamLabel(state!, teamName);
+        labelId = await ensureTeamLabel(state!, tn);
       } catch {
-        logger.warn(`Could not create/find label for team "${teamName}", skipping label`);
+        logger.warn(`Could not create/find label for team "${tn}", skipping label`);
       }
 
       // Resolve parentIssueId from blockedBy (same team only)
       let parentIssueId: string | undefined;
       if (task.blockedBy && task.blockedBy.length > 0) {
         const parentTaskId = task.blockedBy[0];
-        const parentMapping = findMapping(state!, parentTaskId, teamName);
+        const parentMapping = findMapping(state!, parentTaskId, tn);
         if (parentMapping?.issueNodeId) {
           parentIssueId = parentMapping.issueNodeId;
         }
@@ -516,13 +510,13 @@ export async function syncTasks(options: {
       // Set custom fields on the project item
       const effectiveOwner = task.owner || '';
       if (itemId) {
-        await setAllFields(state!, itemId, task, teamName, effectiveOwner);
+        await setAllFields(state!, itemId, task, tn, effectiveOwner);
       }
 
-      const hash = computeTaskHash(task, teamName);
+      const hash = computeTaskHash(task, tn);
       upsertMapping(state!, {
         taskId: task.id,
-        teamName,
+        teamName: tn,
         githubItemId: itemId,
         contentId: issue.id,
         issueNodeId: issue.id,
@@ -543,7 +537,7 @@ export async function syncTasks(options: {
 
   // Create new issues level by level (parallel within each level, sequential between levels)
   for (const levelEntries of depLevels) {
-    await pMap(levelEntries, ({ task, teamName }) => createSingleIssue(task, teamName), 5);
+    await pMap(levelEntries, ({ task, teamName: tn }) => createSingleIssue(task, tn), 5);
   }
 
   // Collect items that need updating vs skipped
@@ -553,8 +547,8 @@ export async function syncTasks(options: {
     const entry = currentTasks.get(key);
     if (!entry) continue; // will be handled as deleted
 
-    const { task, teamName } = entry;
-    const hash = computeTaskHash(task, teamName);
+    const { task, teamName: tn } = entry;
+    const hash = computeTaskHash(task, tn);
 
     if (hash === item.lastHash) {
       result.skipped++;
@@ -567,13 +561,13 @@ export async function syncTasks(options: {
       continue;
     }
 
-    updateEntries.push({ item, task, teamName, hash });
+    updateEntries.push({ item, task, teamName: tn, hash });
   }
 
   // Update changed items in parallel (concurrency limit 5)
-  await pMap(updateEntries, async ({ item, task, teamName, hash }) => {
+  await pMap(updateEntries, async ({ item, task, teamName: tn, hash }) => {
     const title = mapTitle(task);
-    const body = mapBody(task, teamName, resolveTaskGitOptions(task, teamName));
+    const body = mapBody(task, tn, resolveTaskGitOptions(task));
 
     try {
       // Update the real issue
@@ -582,7 +576,7 @@ export async function syncTasks(options: {
 
         // Ensure label is applied (may have been missed on initial creation)
         try {
-          const labelId = await ensureTeamLabel(state!, teamName);
+          const labelId = await ensureTeamLabel(state!, tn);
           await ensureLabelsOnIssue(item.issueNodeId, [labelId]);
         } catch { /* best effort */ }
       }
@@ -590,7 +584,7 @@ export async function syncTasks(options: {
       // Update project item custom fields
       const effectiveOwner = task.owner || item.lastOwner || '';
       if (item.githubItemId) {
-        await setAllFields(state!, item.githubItemId, task, teamName, effectiveOwner);
+        await setAllFields(state!, item.githubItemId, task, tn, effectiveOwner);
       }
 
       upsertMapping(state!, {
@@ -615,14 +609,14 @@ export async function syncTasks(options: {
 
   // Create/update team summary issue with branch link
   if (!options.dryRun) {
-    for (const [teamName, tasks] of tasksByTeam) {
-      await createTeamSummary(state, teamName, tasks, options.quiet, memberCwdsByTeam.get(teamName));
+    for (const [tn, tks] of tasksByTeam) {
+      await createTeamSummary(state, tn, tks, options.quiet, memberCwdsByTeam.get(tn));
     }
   }
 
   // Save updated state
   if (!options.dryRun) {
-    await saveSyncState(state);
+    await saveSyncState(state, teamName);
   }
 
   return result;

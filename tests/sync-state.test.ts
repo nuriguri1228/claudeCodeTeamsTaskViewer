@@ -15,7 +15,7 @@ import {
 let tempDir: string;
 
 vi.mock('../src/utils/paths.js', () => ({
-  getSyncFilePath: () => join(tempDir, '.ccteams-sync.json'),
+  getSyncFilePath: (teamName: string) => join(tempDir, `.ccteams-sync.${teamName}.json`),
 }));
 
 vi.mock('../src/utils/logger.js', () => ({
@@ -102,7 +102,7 @@ describe('createInitialSyncState', () => {
 
 describe('loadSyncState / saveSyncState', () => {
   it('should return null when sync file does not exist', async () => {
-    const result = await loadSyncState();
+    const result = await loadSyncState('test-team');
     expect(result).toBeNull();
   });
 
@@ -110,9 +110,9 @@ describe('loadSyncState / saveSyncState', () => {
     const state = makeSampleState();
     state.items.push(makeSampleMapping());
 
-    await saveSyncState(state);
+    await saveSyncState(state, 'test-team');
 
-    const loaded = await loadSyncState();
+    const loaded = await loadSyncState('test-team');
     expect(loaded).not.toBeNull();
     expect(loaded!.project.id).toBe('PVT_123');
     expect(loaded!.items).toHaveLength(1);
@@ -123,22 +123,46 @@ describe('loadSyncState / saveSyncState', () => {
     const state = makeSampleState();
     const originalTime = state.lastSyncAt;
 
-    await saveSyncState(state);
+    await saveSyncState(state, 'test-team');
 
-    const raw = await readFile(join(tempDir, '.ccteams-sync.json'), 'utf-8');
+    const raw = await readFile(join(tempDir, '.ccteams-sync.test-team.json'), 'utf-8');
     const parsed = JSON.parse(raw);
     expect(parsed.lastSyncAt).not.toBe(originalTime);
   });
 
   it('should write pretty-printed JSON', async () => {
     const state = makeSampleState();
-    await saveSyncState(state);
+    await saveSyncState(state, 'test-team');
 
-    const raw = await readFile(join(tempDir, '.ccteams-sync.json'), 'utf-8');
+    const raw = await readFile(join(tempDir, '.ccteams-sync.test-team.json'), 'utf-8');
     // Pretty-printed JSON has newlines
     expect(raw.split('\n').length).toBeGreaterThan(3);
     // File ends with newline
     expect(raw.endsWith('\n')).toBe(true);
+  });
+
+  it('should isolate state between different teams', async () => {
+    const stateA = makeSampleState();
+    stateA.project.title = 'Team Alpha';
+    stateA.items.push(makeSampleMapping({ taskId: '1', teamName: 'alpha' }));
+
+    const stateB = makeSampleState();
+    stateB.project.title = 'Team Beta';
+    stateB.items.push(makeSampleMapping({ taskId: '2', teamName: 'beta' }));
+
+    await saveSyncState(stateA, 'alpha');
+    await saveSyncState(stateB, 'beta');
+
+    const loadedA = await loadSyncState('alpha');
+    const loadedB = await loadSyncState('beta');
+
+    expect(loadedA!.project.title).toBe('Team Alpha');
+    expect(loadedA!.items).toHaveLength(1);
+    expect(loadedA!.items[0].teamName).toBe('alpha');
+
+    expect(loadedB!.project.title).toBe('Team Beta');
+    expect(loadedB!.items).toHaveLength(1);
+    expect(loadedB!.items[0].teamName).toBe('beta');
   });
 });
 

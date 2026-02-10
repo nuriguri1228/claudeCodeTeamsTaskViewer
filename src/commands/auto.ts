@@ -7,36 +7,55 @@ import { listTeamNames } from '../core/claude-reader.js';
 import { performInit } from './init.js';
 import { parseGitRemoteUrl } from '../utils/git.js';
 import { logger } from '../utils/logger.js';
+import { SyncResult } from '../types/sync.js';
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Default command: auto-init (if needed) + sync.
+ * Default command: iterate over active teams, auto-init each if needed, then sync.
  */
 export async function autoCommand(): Promise<void> {
-  // If sync state exists, just sync
-  const existingState = await loadSyncState();
-  if (existingState) {
-    logger.info(`Syncing tasks to project: ${existingState.project.title}`);
-    const result = await syncTasks({});
-    printSyncResult(result);
+  const teamNames = await listTeamNames();
+  if (teamNames.length === 0) {
+    logger.warn('No active teams found in ~/.claude/tasks/. Nothing to sync.');
     return;
   }
 
-  // No sync state — auto-init
-  await autoInit();
+  const aggregateResult: SyncResult = {
+    created: 0,
+    updated: 0,
+    archived: 0,
+    skipped: 0,
+    errors: [],
+  };
 
-  // Immediately sync
-  logger.info('Running initial sync...');
-  const result = await syncTasks({});
-  printSyncResult(result);
+  for (const teamName of teamNames) {
+    logger.info(`\n--- Team: ${teamName} ---`);
+
+    // Check if this team has sync state; if not, auto-init
+    const existingState = await loadSyncState(teamName);
+    if (!existingState) {
+      await autoInitTeam(teamName);
+    } else {
+      logger.info(`Syncing tasks to project: ${existingState.project.title}`);
+    }
+
+    const result = await syncTasks({ teamName });
+    aggregateResult.created += result.created;
+    aggregateResult.updated += result.updated;
+    aggregateResult.archived += result.archived;
+    aggregateResult.skipped += result.skipped;
+    aggregateResult.errors.push(...result.errors);
+  }
+
+  printSyncResult(aggregateResult);
 }
 
 /**
- * Auto-detect repo and create project. Reusable from syncCommand too.
+ * Auto-detect repo and create a project for a single team.
  */
-export async function autoInit(): Promise<void> {
-  logger.info('No sync state found. Auto-initializing...');
+export async function autoInitTeam(teamName: string): Promise<void> {
+  logger.info(`No sync state found for team "${teamName}". Auto-initializing...`);
 
   // Check gh auth
   const isAuthed = await checkGhAuth();
@@ -61,23 +80,14 @@ export async function autoInit(): Promise<void> {
   const { owner: repoOwner, name: repoName } = parseGitRemoteUrl(remoteUrl);
   logger.info(`Detected repository: ${repoOwner}/${repoName}`);
 
-  // Generate project title based on teams
-  const teamNames = await listTeamNames();
-  let title: string;
-  if (teamNames.length === 0) {
-    title = `ccteams: ${repoName}`;
-  } else if (teamNames.length === 1) {
-    title = `ccteams: ${teamNames[0]}`;
-  } else {
-    title = `ccteams: ${teamNames.join(', ')}`;
-  }
+  const title = `ccteams: ${teamName}`;
 
-  // Perform init
-  await performInit({ repoOwner, repoName, title });
+  // Perform init for this specific team
+  await performInit({ repoOwner, repoName, title, teamName });
 }
 
 function printSyncResult(result: { created: number; updated: number; archived: number; skipped: number; errors: Array<{ taskId: string; error: string }> }): void {
-  logger.info('--- Sync Results ---');
+  logger.info('\n--- Sync Results ---');
   logger.info(`Created:  ${result.created}`);
   logger.info(`Updated:  ${result.updated}`);
   logger.info(`Archived: ${result.archived}`);

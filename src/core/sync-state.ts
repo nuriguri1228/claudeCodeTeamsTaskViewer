@@ -5,10 +5,10 @@ import { getSyncFilePath } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Load sync state from .ccteams-sync.json
+ * Load sync state from .ccteams-sync.{teamName}.json
  */
-export async function loadSyncState(): Promise<SyncStateData | null> {
-  const filePath = getSyncFilePath();
+export async function loadSyncState(teamName: string): Promise<SyncStateData | null> {
+  const filePath = getSyncFilePath(teamName);
   if (!existsSync(filePath)) {
     return null;
   }
@@ -23,10 +23,10 @@ export async function loadSyncState(): Promise<SyncStateData | null> {
 }
 
 /**
- * Save sync state to .ccteams-sync.json
+ * Save sync state to .ccteams-sync.{teamName}.json
  */
-export async function saveSyncState(state: SyncStateData): Promise<void> {
-  const filePath = getSyncFilePath();
+export async function saveSyncState(state: SyncStateData, teamName: string): Promise<void> {
+  const filePath = getSyncFilePath(teamName);
   state.lastSyncAt = new Date().toISOString();
   await writeFile(filePath, JSON.stringify(state, null, 2) + '\n', 'utf-8');
   logger.debug(`Sync state saved to ${filePath}`);
