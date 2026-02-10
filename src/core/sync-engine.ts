@@ -1,3 +1,5 @@
+import { exec as execCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Task } from '../types/claude.js';
 import { SyncResult, SyncStateData } from '../types/sync.js';
 import { readTeamTasks, readAllTasks } from './claude-reader.js';
@@ -20,6 +22,8 @@ import { logger } from '../utils/logger.js';
 import { withLock } from '../utils/lock.js';
 import { getLockFilePath } from '../utils/paths.js';
 import { pMap } from '../utils/concurrency.js';
+
+const execAsync = promisify(execCb);
 
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
@@ -547,6 +551,13 @@ export async function syncTasks(options: {
     }, 5);
   }
 
+  // Create/update team summary issue with branch link
+  if (!options.dryRun) {
+    for (const [teamName, tasks] of tasksByTeam) {
+      await createTeamSummary(state, teamName, tasks, options.quiet);
+    }
+  }
+
   // Save updated state
   if (!options.dryRun) {
     await saveSyncState(state);
@@ -554,4 +565,87 @@ export async function syncTasks(options: {
 
   return result;
   }); // end withLock
+}
+
+/**
+ * Create or update a single summary issue per team.
+ * Pushes current HEAD to a remote branch and links it in the issue body.
+ */
+async function createTeamSummary(
+  state: SyncStateData,
+  teamName: string,
+  tasks: Task[],
+  quiet?: boolean,
+): Promise<void> {
+  if (!state.summaryIssues) state.summaryIssues = {};
+
+  // 1. Push current HEAD to remote branch
+  const branchName = `ccteams/${teamName}`;
+  let branchPushed = false;
+  try {
+    await execAsync(`git push origin HEAD:refs/heads/${branchName} --force`);
+    branchPushed = true;
+    if (!quiet) logger.info(`Pushed branch: ${branchName}`);
+  } catch {
+    logger.warn(`Could not push branch "${branchName}" to remote, skipping branch link`);
+  }
+
+  // 2. Build summary body
+  const branchUrl = `https://github.com/${state.repository.owner}/${state.repository.name}/tree/${branchName}`;
+  const lines: string[] = [];
+  lines.push(`## ${teamName}`);
+  lines.push('');
+  if (branchPushed) {
+    lines.push(`**Branch:** [\`${branchName}\`](${branchUrl})`);
+  }
+  lines.push(`**Last Synced:** ${new Date().toISOString()}`);
+  lines.push(`**Tasks:** ${tasks.length}`);
+  lines.push('');
+  lines.push('| Issue | Task | Status | Owner |');
+  lines.push('|-------|------|--------|-------|');
+  for (const task of tasks) {
+    const mapping = findMapping(state, task.id, teamName);
+    const issueRef = mapping ? `#${mapping.issueNumber}` : '-';
+    lines.push(`| ${issueRef} | ${task.subject} | ${task.status} | ${task.owner || '-'} |`);
+  }
+
+  const title = `[ccteams] ${teamName} — Work Summary`;
+  const body = lines.join('\n');
+
+  // 3. Create or update summary issue
+  const existing = state.summaryIssues[teamName];
+  try {
+    if (existing) {
+      await updateIssue(existing.issueNodeId, title, body);
+      if (!quiet) logger.success(`Updated summary: ${title} (#${existing.issueNumber})`);
+    } else {
+      let labelId: string | undefined;
+      try { labelId = await ensureTeamLabel(state, teamName); } catch { /* skip */ }
+
+      const issue = await createIssue({
+        repositoryId: state.repository.id,
+        title,
+        body,
+        labelIds: labelId ? [labelId] : undefined,
+        projectIds: [state.project.id],
+      });
+
+      try {
+        const itemId = await addProjectV2ItemById(state.project.id, issue.id);
+        const teamFieldId = state.fields['Team Name'];
+        if (teamFieldId) {
+          await updateTextField(state.project.id, itemId, teamFieldId, teamName);
+        }
+      } catch { /* best effort */ }
+
+      state.summaryIssues[teamName] = {
+        issueNodeId: issue.id,
+        issueNumber: issue.number,
+      };
+      if (!quiet) logger.success(`Created summary: ${title} (#${issue.number})`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`Failed to create/update summary: ${msg}`);
+  }
 }
