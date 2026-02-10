@@ -14,8 +14,6 @@ import {
   createLabel,
   updateFieldOptions,
   getProjectFields,
-  getDefaultBranchOid,
-  createBranch,
 } from './github-project.js';
 import { runGraphQL } from '../utils/gh-auth.js';
 import { logger } from '../utils/logger.js';
@@ -352,17 +350,6 @@ export async function syncTasks(options: {
   // Sort new tasks by dependency order so parents are created before children
   const sortedNewEntries = sortByDependency(newEntries);
 
-  // Cache default branch OID once for all branch creations
-  let cachedBranchOid: string | undefined;
-  if (!options.dryRun && sortedNewEntries.length > 0) {
-    try {
-      const { oid } = await getDefaultBranchOid(state.repository.owner, state.repository.name);
-      cachedBranchOid = oid;
-    } catch {
-      logger.warn('Could not fetch default branch OID, branches will be skipped');
-    }
-  }
-
   // Group new tasks by dependency level for parallel creation within each level
   const depLevels: Array<Array<{ task: Task; teamName: string }>> = [];
   const taskLevel = new Map<string, number>();
@@ -439,28 +426,6 @@ export async function syncTasks(options: {
         await setAllFields(state!, itemId, task, teamName, effectiveOwner);
       }
 
-      // Create a branch for this issue
-      let branchName: string | undefined;
-      if (cachedBranchOid) {
-        try {
-          branchName = `ccteams/${teamName}/issue-${issue.number}`;
-          await createBranch(state!.repository.id, branchName, cachedBranchOid);
-          logger.info(`Created branch: ${branchName}`);
-
-          // Update issue body with branch link
-          await updateIssue(issue.id, mapTitle(task), mapBody(task, teamName, branchName));
-        } catch (branchErr) {
-          const branchMsg = branchErr instanceof Error ? branchErr.message : String(branchErr);
-          if (branchMsg.includes('already exists')) {
-            branchName = `ccteams/${teamName}/issue-${issue.number}`;
-            logger.info(`Branch already exists: ${branchName}`);
-          } else {
-            logger.warn(`Could not create branch for issue #${issue.number}: ${branchMsg}`);
-            branchName = undefined;
-          }
-        }
-      }
-
       const hash = computeTaskHash(task, teamName);
       upsertMapping(state!, {
         taskId: task.id,
@@ -472,7 +437,6 @@ export async function syncTasks(options: {
         lastHash: hash,
         lastSyncedAt: new Date().toISOString(),
         lastOwner: effectiveOwner || undefined,
-        branchName,
       });
 
       result.created++;
@@ -516,7 +480,7 @@ export async function syncTasks(options: {
   // Update changed items in parallel (concurrency limit 5)
   await pMap(updateEntries, async ({ item, task, teamName, hash }) => {
     const title = mapTitle(task);
-    const body = mapBody(task, teamName, item.branchName);
+    const body = mapBody(task, teamName);
 
     try {
       // Update the real issue
