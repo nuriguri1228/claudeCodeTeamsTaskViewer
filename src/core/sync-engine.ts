@@ -45,6 +45,24 @@ async function getAgentGitInfo(cwd: string): Promise<{ branch: string; headSha: 
   return { branch, headSha };
 }
 
+/**
+ * Auto-commit uncommitted changes in a working directory before pushing.
+ * Returns true if a new commit was created.
+ */
+async function autoCommitChanges(cwd: string, message: string): Promise<boolean> {
+  try {
+    const { stdout: status } = await execAsync('git status --porcelain', { cwd });
+    if (!status.trim()) return false; // no changes
+
+    await execAsync('git add -A', { cwd });
+    await execAsync(`git commit -m ${JSON.stringify(message)}`, { cwd });
+    return true;
+  } catch {
+    // commit may fail if nothing staged after add (e.g. only ignored files)
+    return false;
+  }
+}
+
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
 
@@ -629,6 +647,14 @@ async function createTeamSummary(
   const hasDistinctCwds = uniqueAgentCwds.size > 1;
 
   if (hasDistinctCwds && memberCwds) {
+    // Auto-commit uncommitted agent work before pushing
+    await Promise.all(
+      [...memberCwds.entries()].map(async ([memberName, cwd]) => {
+        const committed = await autoCommitChanges(cwd, `[ccteams] ${memberName}: auto-commit work for ${teamName}`);
+        if (committed && !quiet) logger.info(`Auto-committed changes for ${memberName}`);
+      }),
+    );
+
     await Promise.all(
       [...memberCwds.entries()].map(async ([memberName, cwd]) => {
         const agentBranch = `ccteams/${teamName}/${memberName}`;
@@ -668,10 +694,17 @@ async function createTeamSummary(
     }
   }
 
-  // 1. Push local work to remote team branch
+  // 1. Auto-commit and push local work to remote team branch
   const branchName = `ccteams/${teamName}`;
   let branchOid = '';
   let branchPushed = false;
+
+  // Auto-commit uncommitted work in the default cwd before pushing
+  {
+    const committed = await autoCommitChanges(process.cwd(), `[ccteams] auto-commit work for ${teamName}`);
+    if (committed && !quiet) logger.info(`Auto-committed changes in default cwd`);
+  }
+
   try {
     await execAsync(`git push origin HEAD:refs/heads/${branchName} --force`);
     const { stdout } = await execAsync('git rev-parse HEAD');
