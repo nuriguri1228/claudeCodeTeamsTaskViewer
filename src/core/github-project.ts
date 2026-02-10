@@ -501,23 +501,60 @@ export async function ensureBranch(
 }
 
 /**
- * Ensure a branch exists AND is linked to an issue via GitHub's Development panel.
- *
- * `createLinkedBranch` only works when both:
- *   - the git ref doesn't already exist
- *   - the issue has no dangling linked-branch records for that ref
- *
- * So we must clean up both before calling the mutation.
+ * Check if a branch is already linked to an issue in the Development panel.
+ * Also cleans up dangling linked-branch records (ref:null).
+ * Returns true if the branch is properly linked.
  */
-export async function ensureBranchLinkedToIssue(
+export async function isBranchLinkedToIssue(
+  issueId: string, branchName: string,
+): Promise<boolean> {
+  const lbData = await runGraphQL(`
+    query($issueId: ID!) {
+      node(id: $issueId) {
+        ... on Issue {
+          linkedBranches(first: 20) {
+            nodes { id ref { name } }
+          }
+        }
+      }
+    }
+  `, { issueId });
+
+  const linkedBranches = lbData.node?.linkedBranches?.nodes ?? [];
+  let found = false;
+  for (const lb of linkedBranches) {
+    if (lb.ref?.name === branchName) {
+      found = true;
+    } else if (!lb.ref) {
+      // Clean up dangling records
+      try {
+        await runGraphQL(`
+          mutation($id: ID!) {
+            deleteLinkedBranch(input: { linkedBranchId: $id }) { issue { id } }
+          }
+        `, { id: lb.id });
+      } catch { /* best effort */ }
+    }
+  }
+  return found;
+}
+
+/**
+ * Link an existing branch to an issue via the Development panel.
+ *
+ * `createLinkedBranch` only works when the git ref doesn't exist yet, so we:
+ * 1. Push actual work first (caller does this via git push)
+ * 2. Delete the remote ref (commit objects remain on remote)
+ * 3. Use createLinkedBranch to recreate the ref + link in one operation
+ */
+export async function linkExistingBranchToIssue(
   owner: string, repoName: string, repositoryId: string,
   issueId: string, branchName: string, oid: string,
 ): Promise<void> {
   await withRetry(async () => {
     const qualifiedName = `refs/heads/${branchName}`;
 
-    // 1. Delete any existing linked-branch records on this issue
-    //    (including dangling ones where ref is null).
+    // 1. Clean up any dangling linked-branch records
     const lbData = await runGraphQL(`
       query($issueId: ID!) {
         node(id: $issueId) {
@@ -530,9 +567,7 @@ export async function ensureBranchLinkedToIssue(
       }
     `, { issueId });
 
-    const linkedBranches = lbData.node?.linkedBranches?.nodes ?? [];
-    for (const lb of linkedBranches) {
-      // Delete dangling (ref:null) or same-name linked branches
+    for (const lb of (lbData.node?.linkedBranches?.nodes ?? [])) {
       if (!lb.ref || lb.ref.name === branchName) {
         try {
           await runGraphQL(`
@@ -544,7 +579,7 @@ export async function ensureBranchLinkedToIssue(
       }
     }
 
-    // 2. Delete the git ref if it already exists
+    // 2. Delete the git ref (commit objects stay on remote after git push)
     const refData = await runGraphQL(`
       query($owner: String!, $name: String!, $qualifiedName: String!) {
         repository(owner: $owner, name: $name) {
@@ -561,7 +596,7 @@ export async function ensureBranchLinkedToIssue(
       `, { refId: refData.repository.ref.id });
     }
 
-    // 3. Create branch + link in one atomic operation
+    // 3. Recreate branch + link via createLinkedBranch
     await runGraphQL(`
       mutation($issueId: ID!, $repositoryId: ID!, $oid: GitObjectID!, $name: String!) {
         createLinkedBranch(input: { issueId: $issueId, repositoryId: $repositoryId, oid: $oid, name: $name }) {
@@ -569,7 +604,7 @@ export async function ensureBranchLinkedToIssue(
         }
       }
     `, { issueId, repositoryId, oid, name: qualifiedName });
-  }, `Ensure branch "${branchName}" linked to issue`);
+  }, `Link branch "${branchName}" to issue`);
 }
 
 /**

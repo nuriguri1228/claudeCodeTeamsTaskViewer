@@ -1,3 +1,5 @@
+import { exec as execCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Task } from '../types/claude.js';
 import { SyncResult, SyncStateData } from '../types/sync.js';
 import { readTeamTasks, readAllTasks } from './claude-reader.js';
@@ -13,7 +15,8 @@ import {
   updateFieldOptions,
   getProjectFields,
   getDefaultBranchOid,
-  ensureBranchLinkedToIssue,
+  isBranchLinkedToIssue,
+  linkExistingBranchToIssue,
   ensureLabelsOnIssue,
 } from './github-project.js';
 import { runGraphQL } from '../utils/gh-auth.js';
@@ -21,6 +24,8 @@ import { logger } from '../utils/logger.js';
 import { withLock } from '../utils/lock.js';
 import { getLockFilePath } from '../utils/paths.js';
 import { pMap } from '../utils/concurrency.js';
+
+const execAsync = promisify(execCb);
 
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
@@ -275,6 +280,14 @@ export async function syncTasks(options: {
     errors: [],
   };
 
+  // Get current HEAD SHA for commit references in issue bodies
+  const repoUrl = `https://github.com/${state.repository.owner}/${state.repository.name}`;
+  let headSha = '';
+  try {
+    const { stdout } = await execAsync('git rev-parse HEAD');
+    headSha = stdout.trim();
+  } catch { /* not in a git repo or no commits */ }
+
   // Collect tasks by team
   let tasksByTeam: Map<string, Task[]>;
   if (options.teamName) {
@@ -378,7 +391,7 @@ export async function syncTasks(options: {
   // Helper to create a single issue
   async function createSingleIssue(task: Task, teamName: string): Promise<void> {
     const title = mapTitle(task);
-    const body = mapBody(task, teamName);
+    const body = mapBody(task, teamName, headSha ? { repoUrl, commitSha: headSha } : undefined);
 
     if (options.dryRun) {
       if (!options.quiet) logger.info(`[dry-run] Would create: ${title}`);
@@ -484,7 +497,7 @@ export async function syncTasks(options: {
   // Update changed items in parallel (concurrency limit 5)
   await pMap(updateEntries, async ({ item, task, teamName, hash }) => {
     const title = mapTitle(task);
-    const body = mapBody(task, teamName);
+    const body = mapBody(task, teamName, headSha ? { repoUrl, commitSha: headSha } : undefined);
 
     try {
       // Update the real issue
@@ -552,13 +565,23 @@ async function createTeamSummary(
 ): Promise<void> {
   if (!state.summaryIssues) state.summaryIssues = {};
 
-  // 1. Get OID for branch creation (done after issue exists)
+  // 1. Push local work to remote branch
   const branchName = `ccteams/${teamName}`;
   let branchOid = '';
+  let branchPushed = false;
   try {
-    branchOid = await getDefaultBranchOid(state.repository.owner, state.repository.name);
+    await execAsync(`git push origin HEAD:refs/heads/${branchName} --force`);
+    const { stdout } = await execAsync('git rev-parse HEAD');
+    branchOid = stdout.trim();
+    branchPushed = true;
+    if (!quiet) logger.info(`Pushed branch: ${branchName} (${branchOid.slice(0, 7)})`);
   } catch {
-    logger.warn(`Could not get default branch OID, skipping branch creation`);
+    // git push failed — fall back to creating empty branch from default branch
+    try {
+      branchOid = await getDefaultBranchOid(state.repository.owner, state.repository.name);
+    } catch {
+      logger.warn(`Could not push or create branch "${branchName}", skipping`);
+    }
   }
 
   // 2. Build summary body
@@ -653,14 +676,25 @@ async function createTeamSummary(
       }
     }
 
-    // 4. Ensure branch exists AND is linked to the summary issue
+    // 5. Ensure branch is linked to the summary issue (Development panel)
     if (branchOid) {
       try {
-        await ensureBranchLinkedToIssue(
-          state.repository.owner, state.repository.name,
-          state.repository.id, issueNodeId, branchName, branchOid,
-        );
-        if (!quiet) logger.info(`Linked branch: ${branchName}`);
+        const alreadyLinked = await isBranchLinkedToIssue(issueNodeId, branchName);
+        if (!alreadyLinked) {
+          // Branch was pushed via git but not yet linked — link it now.
+          // linkExistingBranchToIssue deletes the ref temporarily, then
+          // recreates it via createLinkedBranch which links + creates atomically.
+          await linkExistingBranchToIssue(
+            state.repository.owner, state.repository.name,
+            state.repository.id, issueNodeId, branchName, branchOid,
+          );
+          // Re-push to ensure the ref points to latest HEAD (not just the OID
+          // used for createLinkedBranch, which may be stale if HEAD moved).
+          if (branchPushed) {
+            try { await execAsync(`git push origin HEAD:refs/heads/${branchName} --force`); } catch { /* best effort */ }
+          }
+          if (!quiet) logger.info(`Linked branch: ${branchName}`);
+        }
       } catch {
         logger.warn(`Could not link branch "${branchName}" to summary issue`);
       }
