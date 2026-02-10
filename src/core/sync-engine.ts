@@ -63,6 +63,84 @@ async function autoCommitChanges(cwd: string, message: string): Promise<boolean>
   }
 }
 
+/**
+ * Build a meaningful auto-commit message from task information and changed files.
+ */
+async function buildCommitMessage(cwd: string, teamName: string, tasks: Task[], agentName?: string): Promise<string> {
+  const inProgress = tasks.filter(t => t.status === 'in_progress');
+  const completed = tasks.filter(t => t.status === 'completed');
+
+  // Title line: agent context + task summary
+  const prefix = agentName ? `[ccteams] ${agentName}@${teamName}` : `[ccteams] ${teamName}`;
+
+  let title: string;
+  if (inProgress.length === 1) {
+    title = `${prefix}: ${inProgress[0].subject}`;
+  } else if (inProgress.length > 1) {
+    title = `${prefix}: ${inProgress.map(t => t.subject).join(', ')}`;
+  } else if (completed.length > 0) {
+    title = `${prefix}: ${completed.length} task(s) completed`;
+  } else {
+    title = `${prefix}: sync ${tasks.length} task(s)`;
+  }
+
+  // Truncate title to 72 chars for git convention
+  if (title.length > 72) {
+    title = title.slice(0, 69) + '...';
+  }
+
+  // Body: changed files summary + task list
+  const bodyLines: string[] = [''];
+
+  // Include changed file stats
+  try {
+    const { stdout: diffStat } = await execAsync('git diff --cached --stat --stat-width=60', { cwd });
+    if (diffStat.trim()) {
+      bodyLines.push(diffStat.trim());
+      bodyLines.push('');
+    }
+  } catch { /* ignore */ }
+
+  // Task status summary
+  if (inProgress.length > 0) {
+    bodyLines.push('In progress:');
+    for (const t of inProgress) {
+      bodyLines.push(`  - ${t.subject}`);
+    }
+  }
+  if (completed.length > 0) {
+    bodyLines.push('Completed:');
+    for (const t of completed) {
+      bodyLines.push(`  - ${t.subject}`);
+    }
+  }
+
+  return title + '\n' + bodyLines.join('\n');
+}
+
+/**
+ * Auto-commit with a meaningful message built from task context.
+ * Returns true if a new commit was created.
+ */
+async function autoCommitWithContext(
+  cwd: string,
+  teamName: string,
+  tasks: Task[],
+  agentName?: string,
+): Promise<boolean> {
+  try {
+    const { stdout: status } = await execAsync('git status --porcelain', { cwd });
+    if (!status.trim()) return false;
+
+    await execAsync('git add -A', { cwd });
+    const message = await buildCommitMessage(cwd, teamName, tasks, agentName);
+    await execAsync(`git commit -m ${JSON.stringify(message)}`, { cwd });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
 
@@ -644,7 +722,8 @@ async function createTeamSummary(
     // Auto-commit uncommitted agent work before pushing
     await Promise.all(
       [...memberCwds.entries()].map(async ([memberName, cwd]) => {
-        const committed = await autoCommitChanges(cwd, `[ccteams] ${memberName}: auto-commit work for ${teamName}`);
+        const agentTasks = tasks.filter(t => t.owner === memberName);
+        const committed = await autoCommitWithContext(cwd, teamName, agentTasks, memberName);
         if (committed && !quiet) logger.info(`Auto-committed changes for ${memberName}`);
       }),
     );
@@ -695,7 +774,7 @@ async function createTeamSummary(
 
   // Auto-commit uncommitted work in the default cwd before pushing
   {
-    const committed = await autoCommitChanges(process.cwd(), `[ccteams] auto-commit work for ${teamName}`);
+    const committed = await autoCommitWithContext(process.cwd(), teamName, tasks);
     if (committed && !quiet) logger.info(`Auto-committed changes in default cwd`);
   }
 
