@@ -13,7 +13,7 @@ export function mapTitle(task: Task): string {
  * Generate the body for a GitHub draft issue from a task.
  * Optional repoUrl + commitSha adds a commit reference link.
  */
-export function mapBody(task: Task, teamName: string, options?: { repoUrl?: string; commitSha?: string }): string {
+export function mapBody(task: Task, teamName: string, options?: { repoUrl?: string; commitSha?: string; branchName?: string }): string {
   const lines: string[] = [];
 
   if (task.description) {
@@ -41,6 +41,9 @@ export function mapBody(task: Task, teamName: string, options?: { repoUrl?: stri
   if (options?.commitSha && options?.repoUrl) {
     const shortSha = options.commitSha.slice(0, 7);
     lines.push(`**Latest Commit:** [\`${shortSha}\`](${options.repoUrl}/commit/${options.commitSha})`);
+  }
+  if (options?.branchName && options?.repoUrl) {
+    lines.push(`**Branch:** [\`${options.branchName}\`](${options.repoUrl}/tree/${options.branchName})`);
   }
   return lines.join('\n');
 }

@@ -2,6 +2,7 @@ export interface TeamMember {
   name: string;
   agentId: string;
   agentType: string;
+  cwd?: string;  // agent's working directory (may be a worktree)
 }
 
 export interface TeamConfig {

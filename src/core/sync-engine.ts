@@ -2,7 +2,7 @@ import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Task } from '../types/claude.js';
 import { SyncResult, SyncStateData } from '../types/sync.js';
-import { readTeamTasks, readAllTasks } from './claude-reader.js';
+import { readTeamTasks, readAllTasks, readTeamConfig } from './claude-reader.js';
 import { loadSyncState, saveSyncState, findMapping, upsertMapping } from './sync-state.js';
 import { mapTitle, mapBody, mapStatus, mapCustomFields, computeTaskHash } from './field-mapper.js';
 import {
@@ -26,6 +26,24 @@ import { getLockFilePath } from '../utils/paths.js';
 import { pMap } from '../utils/concurrency.js';
 
 const execAsync = promisify(execCb);
+
+/**
+ * Get git info (HEAD SHA and current branch) for a given working directory.
+ * Supports per-agent worktrees where each agent may have a different branch/commit.
+ */
+async function getAgentGitInfo(cwd: string): Promise<{ branch: string; headSha: string }> {
+  let headSha = '';
+  let branch = '';
+  try {
+    const { stdout: sha } = await execAsync('git rev-parse HEAD', { cwd });
+    headSha = sha.trim();
+  } catch { /* not in a git repo or no commits */ }
+  try {
+    const { stdout: br } = await execAsync('git branch --show-current', { cwd });
+    branch = br.trim();
+  } catch { /* detached HEAD or not in a git repo */ }
+  return { branch, headSha };
+}
 
 const LABEL_COLOR = '6f42c1'; // purple
 const OWNER_COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
@@ -280,13 +298,8 @@ export async function syncTasks(options: {
     errors: [],
   };
 
-  // Get current HEAD SHA for commit references in issue bodies
   const repoUrl = `https://github.com/${state.repository.owner}/${state.repository.name}`;
-  let headSha = '';
-  try {
-    const { stdout } = await execAsync('git rev-parse HEAD');
-    headSha = stdout.trim();
-  } catch { /* not in a git repo or no commits */ }
+  const defaultCwd = process.cwd();
 
   // Collect tasks by team
   let tasksByTeam: Map<string, Task[]>;
@@ -298,6 +311,51 @@ export async function syncTasks(options: {
     }
   } else {
     tasksByTeam = await readAllTasks();
+  }
+
+  // Read team configs and build member-to-cwd maps for per-agent git info
+  const memberCwdsByTeam = new Map<string, Map<string, string>>();
+  for (const teamName of tasksByTeam.keys()) {
+    const config = await readTeamConfig(teamName);
+    if (config) {
+      const cwdMap = new Map<string, string>();
+      for (const member of config.members) {
+        if (member.cwd) {
+          cwdMap.set(member.name, member.cwd);
+        }
+      }
+      if (cwdMap.size > 0) {
+        memberCwdsByTeam.set(teamName, cwdMap);
+      }
+    }
+  }
+
+  // Collect git info for each unique cwd (including default)
+  const uniqueCwds = new Set<string>([defaultCwd]);
+  for (const cwdMap of memberCwdsByTeam.values()) {
+    for (const cwd of cwdMap.values()) {
+      uniqueCwds.add(cwd);
+    }
+  }
+
+  const gitInfoByCwd = new Map<string, { branch: string; headSha: string }>();
+  await Promise.all(
+    [...uniqueCwds].map(async (cwd) => {
+      const info = await getAgentGitInfo(cwd);
+      gitInfoByCwd.set(cwd, info);
+    }),
+  );
+
+  // Helper to resolve per-task git options based on the task owner's cwd
+  function resolveTaskGitOptions(task: Task, teamName: string) {
+    const ownerCwd = task.owner ? memberCwdsByTeam.get(teamName)?.get(task.owner) : undefined;
+    const info = gitInfoByCwd.get(ownerCwd || defaultCwd);
+    if (!info?.headSha) return undefined;
+    return {
+      repoUrl,
+      commitSha: info.headSha,
+      branchName: info.branch || undefined,
+    };
   }
 
   // Build a map of taskKey -> { task, teamName }
@@ -391,7 +449,7 @@ export async function syncTasks(options: {
   // Helper to create a single issue
   async function createSingleIssue(task: Task, teamName: string): Promise<void> {
     const title = mapTitle(task);
-    const body = mapBody(task, teamName, headSha ? { repoUrl, commitSha: headSha } : undefined);
+    const body = mapBody(task, teamName, resolveTaskGitOptions(task, teamName));
 
     if (options.dryRun) {
       if (!options.quiet) logger.info(`[dry-run] Would create: ${title}`);
@@ -497,7 +555,7 @@ export async function syncTasks(options: {
   // Update changed items in parallel (concurrency limit 5)
   await pMap(updateEntries, async ({ item, task, teamName, hash }) => {
     const title = mapTitle(task);
-    const body = mapBody(task, teamName, headSha ? { repoUrl, commitSha: headSha } : undefined);
+    const body = mapBody(task, teamName, resolveTaskGitOptions(task, teamName));
 
     try {
       // Update the real issue
@@ -540,7 +598,7 @@ export async function syncTasks(options: {
   // Create/update team summary issue with branch link
   if (!options.dryRun) {
     for (const [teamName, tasks] of tasksByTeam) {
-      await createTeamSummary(state, teamName, tasks, options.quiet);
+      await createTeamSummary(state, teamName, tasks, options.quiet, memberCwdsByTeam.get(teamName));
     }
   }
 
@@ -562,10 +620,55 @@ async function createTeamSummary(
   teamName: string,
   tasks: Task[],
   quiet?: boolean,
+  memberCwds?: Map<string, string>,
 ): Promise<void> {
   if (!state.summaryIssues) state.summaryIssues = {};
 
-  // 1. Push local work to remote branch
+  // Push per-agent branches when agents have distinct cwds (e.g. worktrees)
+  const uniqueAgentCwds = memberCwds ? new Set(memberCwds.values()) : new Set<string>();
+  const hasDistinctCwds = uniqueAgentCwds.size > 1;
+
+  if (hasDistinctCwds && memberCwds) {
+    await Promise.all(
+      [...memberCwds.entries()].map(async ([memberName, cwd]) => {
+        const agentBranch = `ccteams/${teamName}/${memberName}`;
+        try {
+          await execAsync(`git push origin HEAD:refs/heads/${agentBranch} --force`, { cwd });
+          if (!quiet) logger.info(`Pushed agent branch: ${agentBranch}`);
+        } catch {
+          logger.warn(`Could not push agent branch "${agentBranch}"`);
+        }
+      }),
+    );
+
+    // Link per-agent branches to their task issues
+    for (const [memberName] of memberCwds) {
+      const agentBranch = `ccteams/${teamName}/${memberName}`;
+      const memberTasks = tasks.filter(t => t.owner === memberName);
+      for (const task of memberTasks) {
+        const mapping = findMapping(state, task.id, teamName);
+        if (mapping?.issueNodeId) {
+          try {
+            const alreadyLinked = await isBranchLinkedToIssue(mapping.issueNodeId, agentBranch);
+            if (!alreadyLinked) {
+              const agentInfo = await getAgentGitInfo(memberCwds.get(memberName)!);
+              if (agentInfo.headSha) {
+                await linkExistingBranchToIssue(
+                  state.repository.owner, state.repository.name,
+                  state.repository.id, mapping.issueNodeId, agentBranch, agentInfo.headSha,
+                );
+                if (!quiet) logger.info(`Linked ${agentBranch} to issue #${mapping.issueNumber}`);
+              }
+            }
+          } catch {
+            logger.warn(`Could not link branch "${agentBranch}" to issue #${mapping.issueNumber}`);
+          }
+        }
+      }
+    }
+  }
+
+  // 1. Push local work to remote team branch
   const branchName = `ccteams/${teamName}`;
   let branchOid = '';
   let branchPushed = false;

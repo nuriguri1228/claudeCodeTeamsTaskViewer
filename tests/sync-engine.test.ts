@@ -105,6 +105,40 @@ describe('mapBody', () => {
     const body = mapBody(makePendingTask(), 'test-team');
     expect(body).toContain('**Blocks:** 2');
   });
+
+  it('should include commit link when commitSha and repoUrl are provided', () => {
+    const body = mapBody(makePendingTask(), 'test-team', {
+      repoUrl: 'https://github.com/owner/repo',
+      commitSha: 'abc1234567890',
+    });
+    expect(body).toContain('**Latest Commit:** [`abc1234`](https://github.com/owner/repo/commit/abc1234567890)');
+  });
+
+  it('should include branch link when branchName and repoUrl are provided', () => {
+    const body = mapBody(makePendingTask(), 'test-team', {
+      repoUrl: 'https://github.com/owner/repo',
+      branchName: 'ccteams/my-team/agent-1',
+    });
+    expect(body).toContain('**Branch:** [`ccteams/my-team/agent-1`](https://github.com/owner/repo/tree/ccteams/my-team/agent-1)');
+  });
+
+  it('should not include branch link when branchName is absent', () => {
+    const body = mapBody(makePendingTask(), 'test-team', {
+      repoUrl: 'https://github.com/owner/repo',
+      commitSha: 'abc1234567890',
+    });
+    expect(body).not.toContain('**Branch:**');
+  });
+
+  it('should include both commit and branch links when all options provided', () => {
+    const body = mapBody(makeInProgressTask(), 'test-team', {
+      repoUrl: 'https://github.com/owner/repo',
+      commitSha: 'def5678901234',
+      branchName: 'feature/work',
+    });
+    expect(body).toContain('**Latest Commit:**');
+    expect(body).toContain('**Branch:** [`feature/work`](https://github.com/owner/repo/tree/feature/work)');
+  });
 });
 
 describe('mapStatus', () => {
