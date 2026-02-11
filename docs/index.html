@@ -922,6 +922,12 @@ flowchart TD
       <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>
     },
     {
+      <span class="string">"name"</span>: <span class="string">"frontend-dev"</span>,
+      <span class="string">"agentId"</span>: <span class="string">"jkl-012"</span>,
+      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
+      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>
+    },
+    {
       <span class="string">"name"</span>: <span class="string">"tester"</span>,
       <span class="string">"agentId"</span>: <span class="string">"ghi-789"</span>,
       <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
@@ -959,203 +965,108 @@ flowchart TD
 
     <div class="info-box note">
       <strong>기본 동작: 모든 에이전트가 같은 cwd를 공유</strong>
-      <p>Claude Code Agent Teams는 팀원을 스폰할 때 <strong>리더가 실행 중인 프로젝트 디렉터리를 그대로 상속</strong>합니다. 즉, 별도 설정 없이는 모든 에이전트가 동일한 파일 시스템과 동일한 <code>.git</code> 저장소를 공유합니다. 이것은 의도된 기본 동작이지만, 여러 에이전트가 동시에 같은 파일을 수정하는 경우 충돌의 원인이 됩니다.</p>
+      <p>Claude Code Agent Teams는 팀원을 스폰할 때 <strong>리더가 실행 중인 프로젝트 디렉터리를 그대로 상속</strong>합니다. 즉, 별도 설정 없이는 모든 에이전트가 동일한 파일 시스템과 동일한 <code>.git</code> 저장소를 공유합니다. 이것은 의도된 기본 동작이며, Agent Teams는 <strong>태스크 시스템을 통해 충돌을 방지</strong>하는 메커니즘을 제공합니다.</p>
     </div>
 
-    <h3>같은 <code>cwd</code> 충돌 시나리오</h3>
-    <p>아래는 리더가 <code>frontend-dev</code>를 추가 스폰하여 총 4명이 된 팀에서, <code>backend-dev</code>와 <code>frontend-dev</code>가 <strong>기본 동작 그대로 같은 디렉터리</strong>에서 동시에 작업하는 상황입니다.</p>
+    <h3>같은 <code>cwd</code>에서 충돌이 발생하지 않는 이유</h3>
+    <p>모든 에이전트가 같은 디렉터리를 공유하면 파일 충돌이 일어날 것 같지만, Agent Teams는 <strong>3가지 메커니즘</strong>으로 이를 방지합니다.</p>
 
-    <pre><code><span class="comment">// 리더가 팀원을 스폰 — 별도 cwd 설정 없음 → 모두 /home/user/project</span>
-Task({ name: <span class="string">"backend-dev"</span>,  team_name: <span class="string">"auth-api"</span>, prompt: <span class="string">"JWT 인증 구현"</span>, ... })
-Task({ name: <span class="string">"frontend-dev"</span>, team_name: <span class="string">"auth-api"</span>, prompt: <span class="string">"로그인 UI 구현"</span>, ... })</code></pre>
+    <h4>1. 태스크 분해로 파일 경계 분리</h4>
+    <p>리더는 태스크를 생성할 때 각 에이전트가 <strong>서로 다른 파일/디렉터리</strong>를 담당하도록 분리합니다. 모듈 단위로 작업 영역을 나누면, 같은 cwd를 공유하더라도 실제로 건드리는 파일이 겹치지 않습니다.</p>
 
-    <div class="mermaid-wrapper">
-      <pre class="mermaid">
-sequenceDiagram
-    participant B as backend-dev<br/>cwd: /home/user/project
-    participant FS as 파일 시스템<br/>/home/user/project
-    participant F as frontend-dev<br/>cwd: /home/user/project
-
-    B->>FS: Edit src/app.ts (라우터 추가)
-    F->>FS: Edit src/app.ts (미들웨어 추가)
-    Note over FS: 마지막 Write가 이전 변경을 덮어씀!
-
-    B->>FS: Bash: git add . && git commit
-    Note over B,F: frontend-dev의 변경사항이<br/>backend-dev의 커밋에 섞임
-
-    F->>FS: Bash: git add . && git commit
-    Note over F: "nothing to commit"<br/>이미 backend-dev가 커밋함
-      </pre>
-    </div>
-
-    <div class="info-box warning">
-      <strong>같은 cwd = 같은 파일 시스템 + 같은 .git</strong>
-      <p>두 에이전트가 동일한 디렉터리에서 동시에 작업하면:</p>
-      <ul>
-        <li><strong>파일 덮어쓰기</strong> &mdash; 한 에이전트가 Edit/Write한 파일을 다른 에이전트가 즉시 덮어씀</li>
-        <li><strong>git 상태 오염</strong> &mdash; <code>git status</code>, <code>git diff</code> 결과에 다른 에이전트의 변경사항이 섞임</li>
-        <li><strong>커밋 오염</strong> &mdash; <code>git add .</code> 시 다른 에이전트의 파일까지 스테이징됨</li>
-        <li><strong>브랜치 충돌</strong> &mdash; 두 에이전트가 같은 브랜치의 HEAD를 동시에 변경</li>
-      </ul>
-      <p>Claude Code는 에이전트 간 파일 수준의 락을 제공하지 않으므로, <strong>이 충돌 방지는 사용자의 책임</strong>입니다.</p>
-    </div>
-
-    <h3>해결책: Git Worktree로 에이전트 격리</h3>
-    <p><code>git worktree</code>는 <strong>하나의 Git 저장소에서 여러 작업 디렉터리를 만드는</strong> Git 내장 기능입니다. 각 worktree는 독립된 브랜치를 체크아웃하며, 파일 시스템이 완전히 분리됩니다. 팀원을 스폰하기 전에 worktree를 만들어 두면, 각 에이전트를 서로 다른 <code>cwd</code>에서 격리하여 실행할 수 있습니다.</p>
-
-    <div class="mermaid-wrapper">
-      <pre class="mermaid">
-flowchart TD
-    subgraph REPO["하나의 Git 저장소 (.git)"]
-        ODB["Object Database<br/>모든 커밋, 블롭 공유"]
-    end
-
-    subgraph WT_MAIN["메인 워크트리"]
-        DIR_MAIN["/home/user/project<br/>branch: main"]
-        LEAD["team-lead"]
-    end
-
-    subgraph WT_BACK["worktree: backend"]
-        DIR_BACK["/home/user/project-wt-backend<br/>branch: feat/auth-backend"]
-        BACK["backend-dev"]
-    end
-
-    subgraph WT_FRONT["worktree: frontend"]
-        DIR_FRONT["/home/user/project-wt-frontend<br/>branch: feat/auth-frontend"]
-        FRONT["frontend-dev"]
-    end
-
-    REPO --- WT_MAIN
-    REPO --- WT_BACK
-    REPO --- WT_FRONT
-      </pre>
-    </div>
-
-    <h4>Worktree 핵심 개념</h4>
     <table>
       <thead>
-        <tr><th>구분</th><th>git clone (별도 복사)</th><th>git worktree (공유)</th></tr>
+        <tr><th>에이전트</th><th>담당 영역</th><th>작업 파일 예시</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td>저장소</td>
-          <td>완전히 별개의 <code>.git</code></td>
-          <td><strong>하나의 <code>.git</code></strong>을 공유</td>
+          <td><code>backend-dev</code></td>
+          <td>API 라우트, 미들웨어</td>
+          <td><code>src/routes/</code>, <code>src/middleware/</code></td>
         </tr>
         <tr>
-          <td>디스크 사용량</td>
-          <td>전체 히스토리 복제 (수백 MB~GB)</td>
-          <td><strong>워킹 디렉터리만 추가</strong> (수 MB)</td>
+          <td><code>frontend-dev</code></td>
+          <td>UI 컴포넌트, 페이지</td>
+          <td><code>src/components/</code>, <code>src/pages/</code></td>
         </tr>
         <tr>
-          <td>브랜치 공유</td>
-          <td><code>git fetch</code>로 동기화 필요</td>
-          <td><strong>즉시 공유</strong> (같은 refs)</td>
-        </tr>
-        <tr>
-          <td>같은 브랜치 체크아웃</td>
-          <td>가능 (독립 저장소)</td>
-          <td><strong>불가</strong> (한 브랜치 = 한 worktree)</td>
-        </tr>
-        <tr>
-          <td>파일 격리</td>
-          <td>완전 격리</td>
-          <td><strong>완전 격리</strong></td>
+          <td><code>tester</code></td>
+          <td>테스트 코드</td>
+          <td><code>tests/</code></td>
         </tr>
       </tbody>
     </table>
 
-    <h4>실전 예제: Worktree로 에이전트 격리하기</h4>
-    <p>팀을 만들기 전에, 사용자가 터미널에서 worktree를 준비합니다.</p>
-    <pre><code><span class="comment"># 1. 메인 프로젝트에서 에이전트별 worktree 생성</span>
-<span class="keyword">cd</span> /home/user/project
+    <pre><code><span class="comment">// 리더가 파일 경계를 명확히 지정하여 태스크 생성</span>
+TaskCreate({
+  subject: <span class="string">"JWT 인증 라우트 구현"</span>,
+  description: <span class="string">"src/routes/auth.ts와 src/middleware/jwt.ts를 생성하여..."</span>
+})  <span class="comment">→ backend-dev에게 할당</span>
 
-<span class="comment"># backend-dev 전용 worktree (새 브랜치 자동 생성)</span>
-<span class="func">git worktree add</span> ../project-wt-backend -b feat/auth-backend
+TaskCreate({
+  subject: <span class="string">"로그인 UI 구현"</span>,
+  description: <span class="string">"src/components/LoginForm.tsx와 src/pages/Login.tsx를 생성하여..."</span>
+})  <span class="comment">→ frontend-dev에게 할당</span></code></pre>
 
-<span class="comment"># frontend-dev 전용 worktree (새 브랜치 자동 생성)</span>
-<span class="func">git worktree add</span> ../project-wt-frontend -b feat/auth-frontend
+    <h4>2. <code>blockedBy</code>로 같은 파일 태스크 직렬화</h4>
+    <p>두 태스크가 <strong>같은 파일을 수정해야 하는 경우</strong>, <code>blockedBy</code> 의존성을 설정하여 순서대로 실행되도록 합니다. 선행 태스크가 완료되어야 후행 태스크가 시작되므로, 동시에 같은 파일을 건드리는 상황 자체가 발생하지 않습니다.</p>
 
-<span class="comment"># 2. worktree 목록 확인</span>
-<span class="func">git worktree list</span>
-<span class="comment"># /home/user/project              abc1234 [main]</span>
-<span class="comment"># /home/user/project-wt-backend   abc1234 [feat/auth-backend]</span>
-<span class="comment"># /home/user/project-wt-frontend  abc1234 [feat/auth-frontend]</span></code></pre>
+    <pre><code><span class="comment">// task-001: backend-dev가 먼저 src/app.ts에 라우터 등록</span>
+{
+  <span class="string">"id"</span>: <span class="string">"task-001"</span>,
+  <span class="string">"subject"</span>: <span class="string">"Express 라우터에 /auth 경로 등록"</span>,
+  <span class="string">"owner"</span>: <span class="string">"backend-dev"</span>,
+  <span class="string">"blockedBy"</span>: []
+}
 
-    <p>그런 다음, 리더에게 <strong>"각 에이전트를 worktree 경로에서 실행해줘"</strong>라고 지시하면 리더가 스폰 시 해당 경로를 cwd로 사용합니다. config.json은 다음과 같이 기록됩니다.</p>
-
-    <h4>격리된 config.json</h4>
-    <pre><code>{
-  <span class="string">"team_name"</span>: <span class="string">"auth-api"</span>,
-  <span class="string">"members"</span>: [
-    {
-      <span class="string">"name"</span>: <span class="string">"team-lead"</span>,
-      <span class="string">"agentId"</span>: <span class="string">"abc-123"</span>,
-      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
-      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>                  <span class="comment">← main 브랜치</span>
-    },
-    {
-      <span class="string">"name"</span>: <span class="string">"backend-dev"</span>,
-      <span class="string">"agentId"</span>: <span class="string">"def-456"</span>,
-      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
-      <span class="string">"cwd"</span>: <span class="string">"/home/user/project-wt-backend"</span>       <span class="comment">← feat/auth-backend 브랜치</span>
-    },
-    {
-      <span class="string">"name"</span>: <span class="string">"frontend-dev"</span>,
-      <span class="string">"agentId"</span>: <span class="string">"jkl-012"</span>,
-      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
-      <span class="string">"cwd"</span>: <span class="string">"/home/user/project-wt-frontend"</span>      <span class="comment">← feat/auth-frontend 브랜치</span>
-    },
-    {
-      <span class="string">"name"</span>: <span class="string">"tester"</span>,
-      <span class="string">"agentId"</span>: <span class="string">"ghi-789"</span>,
-      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
-      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>                  <span class="comment">← main (읽기 전용 테스트)</span>
-    }
-  ]
+<span class="comment">// task-003: frontend-dev가 src/app.ts에 미들웨어 추가 (task-001 완료 후)</span>
+{
+  <span class="string">"id"</span>: <span class="string">"task-003"</span>,
+  <span class="string">"subject"</span>: <span class="string">"CORS 미들웨어를 app.ts에 추가"</span>,
+  <span class="string">"owner"</span>: <span class="string">"frontend-dev"</span>,
+  <span class="string">"blockedBy"</span>: [<span class="string">"task-001"</span>]  <span class="comment">← task-001이 완료되어야 시작</span>
 }</code></pre>
+
+    <h4>3. <code>SendMessage</code>로 에이전트 간 조율</h4>
+    <p>작업이 완료되면 에이전트가 <code>SendMessage</code>를 사용하여 관련 에이전트에게 통보합니다. 이를 통해 후속 작업자가 최신 상태를 인지하고 안전하게 작업을 시작할 수 있습니다.</p>
+
+    <pre><code><span class="comment">// backend-dev가 task-001 완료 후 리더에게 메시지</span>
+SendMessage({
+  type: <span class="string">"message"</span>,
+  recipient: <span class="string">"team-lead"</span>,
+  content: <span class="string">"src/app.ts에 /auth 라우터 등록 완료. frontend-dev가 이제 app.ts 수정 가능합니다."</span>,
+  summary: <span class="string">"auth 라우터 등록 완료"</span>
+})</code></pre>
 
     <div class="mermaid-wrapper">
       <pre class="mermaid">
 sequenceDiagram
-    participant B as backend-dev<br/>cwd: project-wt-backend<br/>branch: feat/auth-backend
-    participant GIT as Git Object DB<br/>(공유)
-    participant F as frontend-dev<br/>cwd: project-wt-frontend<br/>branch: feat/auth-frontend
+    participant L as team-lead
+    participant B as backend-dev<br/>cwd: /home/user/project
+    participant F as frontend-dev<br/>cwd: /home/user/project
+    participant FS as 파일 시스템<br/>/home/user/project
 
-    B->>B: Edit src/routes/auth.ts
-    F->>F: Edit src/components/Login.tsx
-    Note over B,F: 파일 시스템이 분리되어<br/>서로 영향 없음
+    L->>L: 태스크 분해 (파일 경계 분리)
+    L->>L: blockedBy 설정 (task-003 blocked by task-001)
 
-    B->>GIT: Bash: git commit (feat/auth-backend)
-    F->>GIT: Bash: git commit (feat/auth-frontend)
-    Note over GIT: 각자의 브랜치에 독립 커밋<br/>Object DB만 공유
+    par 서로 다른 파일 — 동시 작업 OK
+        B->>FS: Edit src/routes/auth.ts (task-001)
+        F->>FS: Edit src/components/LoginForm.tsx (task-002)
+    end
+    Note over B,F: 파일이 겹치지 않으므로 안전하게 병렬 실행
 
-    B->>GIT: Bash: git push origin feat/auth-backend
-    F->>GIT: Bash: git push origin feat/auth-frontend
-    Note over B,F: 각 에이전트가 자신의 cwd에서<br/>독립적으로 push
+    B->>L: SendMessage: "src/app.ts 라우터 등록 완료"
+    Note over B: task-001 완료 → task-003 unblock
+
+    F->>FS: Edit src/app.ts (task-003, blockedBy 해소 후 시작)
+    Note over F: task-001이 끝난 뒤에야<br/>같은 파일(app.ts)을 수정
       </pre>
     </div>
 
     <div class="info-box note">
-      <strong>Worktree의 내부 구조</strong>
-      <p>Worktree 디렉터리에는 <code>.git</code> <strong>파일</strong>(디렉터리가 아님)이 생성되며, 메인 저장소의 <code>.git/worktrees/{name}</code>을 가리키는 포인터 역할을 합니다. 따라서 각 에이전트가 자신의 <code>cwd</code>에서 <code>git</code> 명령을 실행하면 해당 worktree의 브랜치와 인덱스가 사용되어, 다른 에이전트의 작업에 전혀 영향을 주지 않습니다.</p>
+      <strong>같은 cwd, 하지만 태스크 시스템이 조율한다</strong>
+      <p>Agent Teams의 모든 에이전트는 같은 프로젝트 디렉터리를 공유하지만, 충돌은 <strong>태스크 설계 단계에서 원천 차단</strong>됩니다. 리더가 태스크를 모듈/파일 단위로 분리하고, 같은 파일을 건드리는 태스크에는 <code>blockedBy</code>로 순서를 강제하며, <code>SendMessage</code>로 완료를 통보합니다. 파일 수준의 락 없이도, 이 세 가지 메커니즘의 조합으로 안전한 병렬 작업이 가능합니다.</p>
     </div>
-
-    <h4>Worktree 정리</h4>
-    <pre><code><span class="comment"># 작업 완료 후 worktree 제거</span>
-<span class="keyword">cd</span> /home/user/project
-
-<span class="comment"># 각 에이전트의 브랜치를 main에 머지</span>
-<span class="func">git merge</span> feat/auth-backend
-<span class="func">git merge</span> feat/auth-frontend
-
-<span class="comment"># worktree 제거 (디렉터리도 함께 삭제됨)</span>
-<span class="func">git worktree remove</span> ../project-wt-backend
-<span class="func">git worktree remove</span> ../project-wt-frontend
-
-<span class="comment"># 확인</span>
-<span class="func">git worktree list</span>
-<span class="comment"># /home/user/project  def5678 [main]   ← 메인만 남음</span></code></pre>
 
     <h4>태스크 목록: <code>~/.claude/tasks/{team-name}/*.json</code></h4>
     <pre><code>{
