@@ -468,12 +468,11 @@
       cursor: grabbing;
     }
 
-    .diagram-modal-svg-container svg,
-    .diagram-modal-svg-container img {
+    .diagram-modal-svg-container svg {
       transform-origin: 0 0;
       transition: none;
       user-select: none;
-      -webkit-user-drag: none;
+      overflow: hidden;
     }
 
     .diagram-modal-controls {
@@ -2205,13 +2204,13 @@ sequenceDiagram
     let isDragging = false;
     let dragStartX = 0, dragStartY = 0;
     let dragPanStartX = 0, dragPanStartY = 0;
-    const MIN_SCALE = 0.3;
-    const MAX_SCALE = 5;
+    const MIN_SCALE = 0.1;
+    const MAX_SCALE = 20;
 
     function updateTransform() {
-      const el = svgContainer.firstElementChild;
-      if (el) {
-        el.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      const svg = svgContainer.querySelector('svg');
+      if (svg) {
+        svg.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
       }
       zoomLevel.textContent = Math.round(scale * 100) + '%';
     }
@@ -2286,10 +2285,6 @@ sequenceDiagram
     // Close modal
     function closeModal() {
       overlay.classList.remove('active');
-      const img = svgContainer.querySelector('img');
-      if (img && img.src && img.src.startsWith('blob:')) {
-        URL.revokeObjectURL(img.src);
-      }
       svgContainer.innerHTML = '';
       resetView();
     }
@@ -2309,58 +2304,93 @@ sequenceDiagram
       }
     });
 
-    // Open modal: render SVG as <img> via Blob URL for identical rendering
+    // Open modal: DOM-based clone with proper ID namespacing
     function openModal(svgOriginal) {
-      // Capture original dimensions before any manipulation
+      // Get intrinsic dimensions from viewBox (reliable), fallback to bounding rect
       const origRect = svgOriginal.getBoundingClientRect();
+      const viewBox = svgOriginal.getAttribute('viewBox');
+      let w = origRect.width;
+      let h = origRect.height;
+      if (viewBox) {
+        const parts = viewBox.split(/[\s,]+/).map(Number);
+        if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+          w = parts[2];
+          h = parts[3];
+        }
+      }
 
-      // Serialize SVG exactly as the browser rendered it
-      const serializer = new XMLSerializer();
-      const svgMarkup = serializer.serializeToString(svgOriginal);
+      // Deep-clone the SVG DOM node (preserves foreignObject, computed layout)
+      const clone = svgOriginal.cloneNode(true);
 
-      // Create Blob URL — the browser renders it as a self-contained image,
-      // preserving all internal <style>, IDs, gradients, and markers
-      const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
-      const blobUrl = URL.createObjectURL(blob);
+      // Namespace all IDs to avoid conflicts with the original on-page SVG
+      const uid = 'zm' + Date.now() + '_';
+      const idMap = new Map();
+      clone.querySelectorAll('[id]').forEach(el => {
+        const oldId = el.id;
+        const newId = uid + oldId;
+        idMap.set(oldId, newId);
+        el.id = newId;
+      });
 
-      const img = document.createElement('img');
-      img.draggable = false;
-
-      img.onload = () => {
-        const w = img.naturalWidth || origRect.width;
-        const h = img.naturalHeight || origRect.height;
-
-        img.style.width = w + 'px';
-        img.style.height = h + 'px';
-        img.style.transformOrigin = '0 0';
-
-        svgContainer.innerHTML = '';
-        svgContainer.appendChild(img);
-
-        resetView();
-        overlay.classList.add('active');
-
-        requestAnimationFrame(() => {
-          const cRect = svgContainer.getBoundingClientRect();
-          if (w > 0 && h > 0) {
-            const fitScale = Math.min(
-              cRect.width / w * 0.9,
-              cRect.height / h * 0.9,
-              2
-            );
-            scale = fitScale;
-            panX = (cRect.width - w * fitScale) / 2;
-            panY = (cRect.height - h * fitScale) / 2;
-            updateTransform();
+      // Rewrite url(#id), href="#id", xlink:href="#id" in all attributes
+      const walker = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
+      let node = clone;
+      do {
+        for (const attr of Array.from(node.attributes || [])) {
+          let val = attr.value;
+          let changed = false;
+          val = val.replace(/url\(#([^)]+)\)/g, (m, id) => {
+            if (idMap.has(id)) { changed = true; return 'url(#' + idMap.get(id) + ')'; }
+            return m;
+          });
+          if ((attr.name === 'href' || attr.name === 'xlink:href') && val.startsWith('#')) {
+            const refId = val.slice(1);
+            if (idMap.has(refId)) { changed = true; val = '#' + idMap.get(refId); }
           }
+          if (changed) node.setAttribute(attr.name, val);
+        }
+      } while (node = walker.nextNode());
+
+      // Rewrite ID references inside <style> blocks
+      clone.querySelectorAll('style').forEach(styleEl => {
+        let css = styleEl.textContent;
+        idMap.forEach((newId, oldId) => {
+          const esc = oldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          css = css.replace(new RegExp('#' + esc + '(?=[^a-zA-Z0-9_-]|$)', 'g'), '#' + newId);
         });
-      };
+        styleEl.textContent = css;
+      });
 
-      img.onerror = () => {
-        URL.revokeObjectURL(blobUrl);
-      };
+      // Set explicit dimensions and remove page-inherited constraints
+      clone.removeAttribute('style');
+      clone.setAttribute('width', w);
+      clone.setAttribute('height', h);
+      clone.style.width = w + 'px';
+      clone.style.height = h + 'px';
+      clone.style.maxWidth = 'none';
+      clone.style.maxHeight = 'none';
+      clone.style.overflow = 'hidden';
+      clone.style.transformOrigin = '0 0';
 
-      img.src = blobUrl;
+      svgContainer.innerHTML = '';
+      svgContainer.appendChild(clone);
+
+      resetView();
+      overlay.classList.add('active');
+
+      requestAnimationFrame(() => {
+        const cRect = svgContainer.getBoundingClientRect();
+        if (w > 0 && h > 0) {
+          const fitScale = Math.min(
+            cRect.width / w * 0.9,
+            cRect.height / h * 0.9
+          );
+          scale = fitScale;
+          panX = (cRect.width - w * fitScale) / 2;
+          panY = (cRect.height - h * fitScale) / 2;
+          updateTransform();
+        }
+      });
     }
 
     // Bind click handlers to mermaid wrappers
