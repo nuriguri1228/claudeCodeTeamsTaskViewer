@@ -468,9 +468,12 @@
       cursor: grabbing;
     }
 
-    .diagram-modal-svg-container svg {
+    .diagram-modal-svg-container svg,
+    .diagram-modal-svg-container img {
       transform-origin: 0 0;
       transition: none;
+      user-select: none;
+      -webkit-user-drag: none;
     }
 
     .diagram-modal-controls {
@@ -2206,9 +2209,9 @@ sequenceDiagram
     const MAX_SCALE = 5;
 
     function updateTransform() {
-      const svg = svgContainer.querySelector('svg');
-      if (svg) {
-        svg.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      const el = svgContainer.firstElementChild;
+      if (el) {
+        el.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
       }
       zoomLevel.textContent = Math.round(scale * 100) + '%';
     }
@@ -2283,6 +2286,10 @@ sequenceDiagram
     // Close modal
     function closeModal() {
       overlay.classList.remove('active');
+      const img = svgContainer.querySelector('img');
+      if (img && img.src && img.src.startsWith('blob:')) {
+        URL.revokeObjectURL(img.src);
+      }
       svgContainer.innerHTML = '';
       resetView();
     }
@@ -2302,54 +2309,58 @@ sequenceDiagram
       }
     });
 
-    // Open modal: serialize SVG and re-create with unique IDs
+    // Open modal: render SVG as <img> via Blob URL for identical rendering
     function openModal(svgOriginal) {
-      const uid = 'zm' + Date.now() + '_';
-      let markup = svgOriginal.outerHTML;
+      // Capture original dimensions before any manipulation
+      const origRect = svgOriginal.getBoundingClientRect();
 
-      // Collect all IDs in the SVG
-      const idSet = new Set();
-      markup.replace(/\bid="([^"]+)"/g, (_, id) => { idSet.add(id); return _; });
+      // Serialize SVG exactly as the browser rendered it
+      const serializer = new XMLSerializer();
+      const svgMarkup = serializer.serializeToString(svgOriginal);
 
-      // Rewrite IDs and all references to them to avoid conflicts
-      idSet.forEach(oldId => {
-        const newId = uid + oldId;
-        const esc = oldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        markup = markup.replace(new RegExp('id="' + esc + '"', 'g'), 'id="' + newId + '"');
-        markup = markup.replace(new RegExp('url\\(#' + esc + '\\)', 'g'), 'url(#' + newId + ')');
-        markup = markup.replace(new RegExp('href="#' + esc + '"', 'g'), 'href="#' + newId + '"');
-      });
+      // Create Blob URL — the browser renders it as a self-contained image,
+      // preserving all internal <style>, IDs, gradients, and markers
+      const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
 
-      svgContainer.innerHTML = markup;
-      const clone = svgContainer.querySelector('svg');
-      if (!clone) return;
+      const img = document.createElement('img');
+      img.draggable = false;
 
-      clone.removeAttribute('width');
-      clone.removeAttribute('height');
-      clone.style.width = 'auto';
-      clone.style.height = 'auto';
-      clone.style.maxWidth = 'none';
-      clone.style.maxHeight = 'none';
-      clone.style.transformOrigin = '0 0';
+      img.onload = () => {
+        const w = img.naturalWidth || origRect.width;
+        const h = img.naturalHeight || origRect.height;
 
-      resetView();
-      overlay.classList.add('active');
+        img.style.width = w + 'px';
+        img.style.height = h + 'px';
+        img.style.transformOrigin = '0 0';
 
-      requestAnimationFrame(() => {
-        const cRect = svgContainer.getBoundingClientRect();
-        const sRect = clone.getBoundingClientRect();
-        if (sRect.width > 0 && sRect.height > 0) {
-          const fitScale = Math.min(
-            cRect.width / sRect.width * 0.9,
-            cRect.height / sRect.height * 0.9,
-            2
-          );
-          scale = fitScale;
-          panX = (cRect.width - sRect.width * fitScale) / 2;
-          panY = (cRect.height - sRect.height * fitScale) / 2;
-          updateTransform();
-        }
-      });
+        svgContainer.innerHTML = '';
+        svgContainer.appendChild(img);
+
+        resetView();
+        overlay.classList.add('active');
+
+        requestAnimationFrame(() => {
+          const cRect = svgContainer.getBoundingClientRect();
+          if (w > 0 && h > 0) {
+            const fitScale = Math.min(
+              cRect.width / w * 0.9,
+              cRect.height / h * 0.9,
+              2
+            );
+            scale = fitScale;
+            panX = (cRect.width - w * fitScale) / 2;
+            panY = (cRect.height - h * fitScale) / 2;
+            updateTransform();
+          }
+        });
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(blobUrl);
+      };
+
+      img.src = blobUrl;
     }
 
     // Bind click handlers to mermaid wrappers
