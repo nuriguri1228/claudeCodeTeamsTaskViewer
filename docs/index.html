@@ -253,12 +253,13 @@
     }
 
     /* Syntax highlighting */
-    .comment { color: var(--text-muted); }
-    .keyword { color: var(--red); }
+    .comment { color: #7ee787; font-style: italic; }
+    .keyword { color: #ff7b72; }
     .string { color: #a5d6ff; }
     .func { color: #d2a8ff; }
     .type { color: var(--orange); }
     .number { color: #79c0ff; }
+    .green { color: #3fb950; }
 
     /* Tables */
     table {
@@ -333,6 +334,32 @@
       overflow-x: auto;
       display: flex;
       justify-content: center;
+      cursor: zoom-in;
+      position: relative;
+      transition: border-color 0.2s;
+    }
+
+    .mermaid-wrapper:hover {
+      border-color: var(--accent);
+    }
+
+    .mermaid-wrapper::after {
+      content: 'Click to expand';
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--bg-tertiary);
+      padding: 2px 8px;
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+
+    .mermaid-wrapper:hover::after {
+      opacity: 1;
     }
 
     .mermaid-wrapper pre.mermaid {
@@ -340,6 +367,59 @@
       border: none;
       padding: 0;
       margin: 0;
+    }
+
+    /* Diagram zoom modal */
+    .diagram-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      cursor: zoom-out;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .diagram-modal-overlay.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .diagram-modal-content {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 40px;
+      max-width: 95vw;
+      max-height: 90vh;
+      overflow: auto;
+      transform: scale(0.95);
+      animation: zoomIn 0.2s ease forwards;
+    }
+
+    .diagram-modal-hint {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--text-muted);
+      font-size: 13px;
+      background: var(--bg-tertiary);
+      padding: 6px 16px;
+      border-radius: 20px;
+      pointer-events: none;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes zoomIn {
+      from { transform: scale(0.95); opacity: 0.5; }
+      to { transform: scale(1); opacity: 1; }
     }
 
     /* Flow steps */
@@ -665,19 +745,19 @@
     <div class="mermaid-wrapper">
       <pre class="mermaid">
 flowchart TD
-    User["👤 사용자 (User)\n자연어로 작업 지시 / 팀 요청"]
-    Leader["🎯 팀 리더 (Leader)\nTeamCreate · Task(spawn)\nTaskCreate · TaskUpdate\nSendMessage"]
-    A["🤖 팀원 A\n(독립 인스턴스)\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
-    B["🤖 팀원 B\n(독립 인스턴스)\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
-    C["🤖 팀원 C\n(독립 인스턴스)\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
-    Tasks["📋 공유 태스크 목록\n~/.claude/tasks/{team}/\ntask-1.json (pending)\ntask-2.json (in_progress)\ntask-3.json (completed)"]
+    User["👤 사용자 User\n자연어로 작업 지시 / 팀 요청"]
+    Leader["🎯 팀 리더 Leader\nTeamCreate · Task spawn\nTaskCreate · TaskUpdate\nSendMessage"]
+    A["🤖 팀원 A\n독립 인스턴스\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
+    B["🤖 팀원 B\n독립 인스턴스\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
+    C["🤖 팀원 C\n독립 인스턴스\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
+    Tasks["📋 공유 태스크 목록\n~/.claude/tasks/team/\ntask-1.json pending\ntask-2.json in_progress\ntask-3.json completed"]
 
     User --> Leader
     Leader --> A
     Leader --> B
     Leader --> C
-    A <-.->|메시지| B
-    B <-.->|메시지| C
+    A -.-|메시지| B
+    B -.-|메시지| C
     A --> Tasks
     B --> Tasks
     C --> Tasks
@@ -848,12 +928,10 @@ TeamDelete()
       <pre class="mermaid">
 stateDiagram-v2
     [*] --> pending
-    pending --> in_progress : TaskUpdate\n(status: in_progress)
-    in_progress --> completed : TaskUpdate\n(status: completed)
-    pending --> blocked : blockedBy: ["task-B"]
-    blocked --> pending : task-B completed\n→ auto unblock
-
-    note right of completed : 의존된 태스크가\n자동으로 unblock됨
+    pending --> in_progress : TaskUpdate - status: in_progress
+    in_progress --> completed : TaskUpdate - status: completed
+    pending --> blocked : blockedBy 설정됨
+    blocked --> pending : 의존 태스크 completed 시 auto unblock
       </pre>
     </div>
 
@@ -946,15 +1024,15 @@ sequenceDiagram
     participant C as 🤖 팀원 C
     participant L as 🎯 리더
 
-    Note over A,B: Direct Message (1:1)
-    A->>B: SendMessage(type: "message")
+    Note over A,B: Direct Message 1:1
+    A->>B: SendMessage type message
     Note right of B: 자동 전달 / 큐잉
     B-->>A: 응답 메시지
 
-    Note over L,C: Broadcast (1:N)
-    L->>A: broadcast: "긴급: API 스키마 변경됨"
-    L->>B: broadcast: "긴급: API 스키마 변경됨"
-    L->>C: broadcast: "긴급: API 스키마 변경됨"
+    Note over L,C: Broadcast 1:N
+    L->>A: broadcast - 긴급 API 스키마 변경됨
+    L->>B: broadcast - 긴급 API 스키마 변경됨
+    L->>C: broadcast - 긴급 API 스키마 변경됨
       </pre>
     </div>
 
@@ -1146,22 +1224,25 @@ sequenceDiagram
 flowchart TD
     subgraph CC["Claude Code Agent Teams"]
         direction TB
-        Leader["🎯 리더"] <-->|조율| Teammates["🤖 팀원들"]
-        Leader -->|"TaskCreate\nTaskUpdate"| TF["📁 ~/.claude/tasks/{team}/*.json\n태스크 파일 (로컬)"]
-        Teammates -->|"TaskUpdate\n(status 변경)"| TF
+        Leader["🎯 리더"]
+        Teammates["🤖 팀원들"]
+        TF["📁 ~/.claude/tasks/team/*.json\n태스크 파일 - 로컬"]
+        Leader -- 조율 --- Teammates
+        Leader -->|TaskCreate / TaskUpdate| TF
+        Teammates -->|TaskUpdate - status 변경| TF
     end
 
     TF --> Hooks["⚡ Hooks\nPostToolUse"]
-    TF --> Watch["👁️ Watch\nchokidar 파일감시"]
-    TF --> Manual["🖥️ Manual\nccteams sync"]
+    TF --> Watch["👁 Watch\nchokidar 파일감시"]
+    TF --> Manual["🖥 Manual\nccteams sync"]
 
     Hooks --> CLI
     Watch --> CLI
     Manual --> CLI
 
-    CLI["⚙️ ccteams CLI\n1. Lock 획득\n2. 태스크 읽기\n3. 해시 비교\n4. GitHub 동기화\n5. 상태 저장\n6. Lock 해제"]
+    CLI["⚙ ccteams CLI\n1. Lock 획득\n2. 태스크 읽기\n3. 해시 비교\n4. GitHub 동기화\n5. 상태 저장\n6. Lock 해제"]
 
-    CLI --> GH["🐙 GitHub\nIssues (실제) · Projects V2\nLabels · Sub-issues · Branches"]
+    CLI --> GH["🐙 GitHub\nIssues - Projects V2\nLabels - Sub-issues - Branches"]
       </pre>
     </div>
 
@@ -1326,16 +1407,14 @@ git rev-parse --abbrev-ref HEAD     <span class="comment">→ branch name</span>
         <div class="flow-step-content">
           <h4>변경된 태스크 업데이트</h4>
           <p>이미 동기화된 태스크의 해시를 비교하여, 변경된 것만 업데이트합니다.</p>
-          <pre><code><span class="comment">// computeTaskHash() → SHA-256(subject + description + status + ...)</span>
-
-<span class="comment">// 해시 구성 요소:</span>
-<span class="comment">//  subject, description, status, owner,</span>
-<span class="comment">//  activeForm, blockedBy(sorted), blocks(sorted), teamName</span>
-
-<span class="keyword">if</span> (currentHash !== mapping.lastHash) {
-  <span class="comment">// Issue 제목/본문 업데이트 + 커스텀 필드 재설정</span>
-  updateIssue(issueId, newTitle, newBody)
-  setAllFields(state, itemId, task, teamName)
+          <p><code>computeTaskHash()</code>로 SHA-256 해시를 계산하여 비교합니다. 해시 구성 요소:</p>
+          <ul>
+            <li><code>subject</code>, <code>description</code>, <code>status</code>, <code>owner</code></li>
+            <li><code>activeForm</code>, <code>blockedBy</code> (정렬), <code>blocks</code> (정렬), <code>teamName</code></li>
+          </ul>
+          <pre><code><span class="keyword">if</span> (currentHash !== mapping.lastHash) {
+  <span class="keyword">await</span> <span class="func">updateIssue</span>(issueId, newTitle, newBody)  <span class="comment">// Issue 제목/본문 업데이트</span>
+  <span class="keyword">await</span> <span class="func">setAllFields</span>(state, itemId, task, teamName) <span class="comment">// 커스텀 필드 재설정</span>
 }</code></pre>
         </div>
       </div>
@@ -1402,9 +1481,9 @@ git rev-parse --abbrev-ref HEAD     <span class="comment">→ branch name</span>
       <pre class="mermaid">
 flowchart TD
     A["🤖 에이전트 팀원이\n태스크 상태 변경"]
-    B["TaskCreate / TaskUpdate\n(Claude Code 내부 도구)"]
-    C["⚡ PostToolUse Hook 트리거\n\nmatcher: TaskCreate|TaskUpdate\n(Claude Code Hooks 시스템)"]
-    D["ccteams sync --quiet\n(비동기 실행, async: true)\n\n1. Lock 획득\n2. 태스크 읽기\n3. 변경분 감지\n4. GitHub 동기화\n5. Lock 해제"]
+    B["TaskCreate / TaskUpdate\nClaude Code 내부 도구"]
+    C["⚡ PostToolUse Hook 트리거\n\nmatcher: TaskCreate or TaskUpdate\nClaude Code Hooks 시스템"]
+    D["ccteams sync --quiet\n비동기 실행 async: true\n\n1. Lock 획득\n2. 태스크 읽기\n3. 변경분 감지\n4. GitHub 동기화\n5. Lock 해제"]
 
     A --> B --> C --> D
       </pre>
@@ -1582,9 +1661,9 @@ flowchart TD
       <pre class="mermaid">
 flowchart TD
     Read["📁 태스크 파일 읽기"]
-    Hash["computeTaskHash(task)\n→ currentHash (SHA-256)"]
-    Lookup["sync state에서 매핑 조회\nfindMapping(state, taskId)\n→ mapping.lastHash"]
-    Compare{"currentHash\n===\nlastHash?"}
+    Hash["computeTaskHash - task\ncurrentHash SHA-256 생성"]
+    Lookup["sync state에서 매핑 조회\nfindMapping에서 lastHash 가져옴"]
+    Compare{"currentHash\n===\nlastHash ?"}
     Skip["✅ SKIP\nAPI 호출 없음"]
     Update["🔄 UPDATE\nIssue 제목/본문 업데이트\n커스텀 필드 재설정\nlastHash 갱신"]
 
@@ -1635,18 +1714,18 @@ flowchart TD
 flowchart LR
     subgraph Claude["Claude Code Tasks"]
         direction TB
-        TA["Task A\n(no deps)"]
-        TB["Task B\n(blockedBy: [A])"]
-        TC["Task C\n(blockedBy: [B])"]
+        TA["Task A\nno deps"]
+        TB["Task B\nblockedBy A"]
+        TC["Task C\nblockedBy B"]
         TA -->|blockedBy| TB
         TB -->|blockedBy| TC
     end
 
-    subgraph GitHub["GitHub Issues"]
+    subgraph GH["GitHub Issues"]
         direction TB
-        I1["Issue #1\n(root)"]
-        I2["Issue #2\n(child of #1)"]
-        I3["Issue #3\n(child of #2)"]
+        I1["Issue #1\nroot"]
+        I2["Issue #2\nchild of #1"]
+        I3["Issue #3\nchild of #2"]
         I1 -->|parent| I2
         I2 -->|parent| I3
     end
@@ -1664,33 +1743,29 @@ flowchart LR
     <p>ccteams는 동기화 시 에이전트의 작업 디렉터리에서 자동으로 커밋을 생성하고, 에이전트별 브랜치를 GitHub에 푸시합니다.</p>
 
     <h3>커밋 메시지 구조</h3>
-    <pre><code><span class="comment">// src/core/sync-engine.ts - buildCommitMessage()</span>
+    <p><code>src/core/sync-engine.ts</code>의 <code>buildCommitMessage()</code> 출력 예시:</p>
+    <pre><code><span class="func">[ccteams] backend-dev@auth-api: JWT 토큰 검증 미들웨어 구현</span>  <span class="comment">← 제목 (72자 이내)</span>
 
-<span class="comment">// 제목 (72자 이내)</span>
-[ccteams] backend-dev@auth-api: JWT 토큰 검증 미들웨어 구현
-
-<span class="comment">// 본문</span>
-<span class="comment">// git diff --stat 결과</span>
- src/middleware/auth.ts | 45 +++++++++++++++
- src/utils/jwt.ts       | 23 ++++++++
+<span class="type">── git diff --stat ──</span>
+ src/middleware/auth.ts | 45 <span class="string">+++++++++++++++</span>
+ src/utils/jwt.ts       | 23 <span class="string">++++++++</span>
  2 files changed, 68 insertions(+)
 
-<span class="comment">// 태스크 상태 요약</span>
-Tasks:
-- [x] JWT 토큰 검증 미들웨어 구현 (completed)
-- [ ] 로그인 API 엔드포인트 구현 (in_progress)
-- [ ] 테스트 작성 (pending)</code></pre>
+<span class="type">── Tasks ──</span>
+- <span class="green">[x]</span> JWT 토큰 검증 미들웨어 구현 <span class="green">(completed)</span>
+- <span class="keyword">[ ]</span> 로그인 API 엔드포인트 구현 <span class="keyword">(in_progress)</span>
+- <span class="type">[ ]</span> 테스트 작성 <span class="type">(pending)</span></code></pre>
 
     <h3>브랜치 링크 흐름</h3>
     <div class="mermaid-wrapper">
       <pre class="mermaid">
 flowchart TD
-    CWD["📂 에이전트 작업 디렉터리 (cwd)"]
+    CWD["📂 에이전트 작업 디렉터리 cwd"]
     Detect["1. 미커밋 변경사항 감지\ngit status"]
-    Commit["2. auto-commit 생성\n[ccteams] agent@team: task-subject"]
+    Commit["2. auto-commit 생성\nccteams agent@team: task-subject"]
     SHA["3. HEAD SHA 확인\ngit rev-parse HEAD"]
-    Branch["4. GitHub에 브랜치 ref 생성\nccteams/{team}/{member}"]
-    Link["5. Issue에 브랜치 링크\n→ Development 패널에 표시"]
+    Branch["4. GitHub에 브랜치 ref 생성\nccteams/team/member"]
+    Link["5. Issue에 브랜치 링크\nDevelopment 패널에 표시"]
 
     CWD --> Detect --> Commit --> SHA --> Branch --> Link
       </pre>
@@ -1719,22 +1794,22 @@ sequenceDiagram
     participant Lock as Lock 파일
     participant B as 에이전트 B
 
-    A->>Lock: TaskUpdate → Hook → sync 시작
-    Note over Lock: 락 획득 성공 (wx)
+    A->>Lock: Hook 트리거 - sync 시작
+    Note over Lock: 락 획득 성공 wx
 
-    B->>Lock: TaskUpdate → Hook → sync 시도
-    Note over Lock: 락 존재 → EEXIST
-    loop 1초 간격 폴링 (최대 30초)
+    B->>Lock: Hook 트리거 - sync 시도
+    Note over Lock: 락 존재 EEXIST
+    loop 1초 간격 폴링 최대 30초
         B->>Lock: 락 확인
         Lock-->>B: 아직 잠겨있음
     end
 
-    A->>Lock: sync 완료 → 락 해제
+    A->>Lock: sync 완료 - 락 해제
     Note over Lock: .lock 파일 삭제
 
     B->>Lock: 락 획득 성공
     Note over B: sync 실행
-    B->>Lock: sync 완료 → 락 해제
+    B->>Lock: sync 완료 - 락 해제
       </pre>
     </div>
 
@@ -1939,6 +2014,93 @@ sequenceDiagram
       stateBorder: '#58a6ff',
       labelColor: '#e6edf3'
     }
+  });
+</script>
+
+<script>
+  // Click-to-expand diagram modal
+  document.addEventListener('DOMContentLoaded', () => {
+    // Create modal elements
+    const overlay = document.createElement('div');
+    overlay.className = 'diagram-modal-overlay';
+
+    const content = document.createElement('div');
+    content.className = 'diagram-modal-content';
+
+    const hint = document.createElement('div');
+    hint.className = 'diagram-modal-hint';
+    hint.textContent = 'Click anywhere or press ESC to close';
+
+    overlay.appendChild(content);
+    overlay.appendChild(hint);
+    document.body.appendChild(overlay);
+
+    // Close modal
+    function closeModal() {
+      overlay.classList.remove('active');
+      content.innerHTML = '';
+    }
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target === content) {
+        closeModal();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && overlay.classList.contains('active')) {
+        closeModal();
+      }
+    });
+
+    // Wait for Mermaid to render, then attach click handlers
+    const observer = new MutationObserver(() => {
+      document.querySelectorAll('.mermaid-wrapper').forEach(wrapper => {
+        if (wrapper.dataset.modalBound) return;
+        wrapper.dataset.modalBound = 'true';
+
+        wrapper.addEventListener('click', () => {
+          const svg = wrapper.querySelector('svg');
+          if (!svg) return;
+
+          const clone = svg.cloneNode(true);
+          clone.style.maxWidth = '100%';
+          clone.style.height = 'auto';
+          clone.removeAttribute('width');
+          clone.setAttribute('width', '100%');
+
+          content.innerHTML = '';
+          content.appendChild(clone);
+          overlay.classList.add('active');
+        });
+      });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Also try binding immediately in case Mermaid already rendered
+    setTimeout(() => {
+      document.querySelectorAll('.mermaid-wrapper').forEach(wrapper => {
+        if (wrapper.dataset.modalBound) return;
+        wrapper.dataset.modalBound = 'true';
+
+        wrapper.addEventListener('click', () => {
+          const svg = wrapper.querySelector('svg');
+          if (!svg) return;
+
+          const clone = svg.cloneNode(true);
+          clone.style.maxWidth = '100%';
+          clone.style.height = 'auto';
+          clone.removeAttribute('width');
+          clone.setAttribute('width', '100%');
+
+          content.innerHTML = '';
+          content.appendChild(clone);
+          overlay.classList.add('active');
+        });
+      });
+      observer.disconnect();
+    }, 3000);
   });
 </script>
 </body>
