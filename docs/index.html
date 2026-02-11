@@ -261,6 +261,60 @@
     .number { color: #79c0ff; }
     .green { color: #3fb950; }
 
+    /* Source file label above code blocks */
+    .code-source {
+      display: inline-block;
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      padding: 3px 10px;
+      border-radius: 6px 6px 0 0;
+      border: 1px solid var(--border);
+      border-bottom: none;
+      margin-bottom: -1px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Result annotation after code blocks */
+    .code-result {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(63, 185, 80, 0.06);
+      border: 1px solid rgba(63, 185, 80, 0.2);
+      border-radius: 6px;
+      padding: 8px 14px;
+      margin: -12px 0 20px;
+      font-size: 13px;
+      color: var(--green);
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+
+    .code-result::before {
+      content: '→';
+      font-weight: 700;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    /* Step label within code explanations */
+    .code-step-label {
+      display: inline-block;
+      background: var(--highlight);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 10px;
+      border-radius: 4px;
+      margin: 12px 0 6px;
+    }
+
+    .code-step-label:first-child {
+      margin-top: 0;
+    }
+
     /* Tables */
     table {
       width: 100%;
@@ -377,7 +431,7 @@
       z-index: 9999;
       background: rgba(0, 0, 0, 0.85);
       backdrop-filter: blur(8px);
-      cursor: zoom-out;
+      cursor: default;
       animation: fadeIn 0.2s ease;
     }
 
@@ -391,12 +445,95 @@
       background: var(--bg-secondary);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 40px;
-      max-width: 95vw;
-      max-height: 90vh;
-      overflow: auto;
+      padding: 32px;
+      width: 90vw;
+      height: 85vh;
+      overflow: hidden;
       transform: scale(0.95);
       animation: zoomIn 0.2s ease forwards;
+      position: relative;
+    }
+
+    .diagram-modal-svg-container {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      cursor: grab;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .diagram-modal-svg-container:active {
+      cursor: grabbing;
+    }
+
+    .diagram-modal-svg-container svg {
+      transform-origin: 0 0;
+      transition: none;
+    }
+
+    .diagram-modal-controls {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      display: flex;
+      gap: 8px;
+      z-index: 2;
+    }
+
+    .diagram-modal-controls button {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .diagram-modal-controls button:hover {
+      background: var(--highlight);
+      border-color: var(--accent);
+    }
+
+    .diagram-modal-zoom-level {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .diagram-modal-close {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      z-index: 2;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .diagram-modal-close:hover {
+      background: var(--highlight);
+      color: var(--text);
     }
 
     .diagram-modal-hint {
@@ -745,12 +882,12 @@
     <div class="mermaid-wrapper">
       <pre class="mermaid">
 flowchart TD
-    User["👤 사용자 User\n자연어로 작업 지시 / 팀 요청"]
-    Leader["🎯 팀 리더 Leader\nTeamCreate · Task spawn\nTaskCreate · TaskUpdate\nSendMessage"]
-    A["🤖 팀원 A\n독립 인스턴스\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
-    B["🤖 팀원 B\n독립 인스턴스\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
-    C["🤖 팀원 C\n독립 인스턴스\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
-    Tasks["📋 공유 태스크 목록\n~/.claude/tasks/team/\ntask-1.json pending\ntask-2.json in_progress\ntask-3.json completed"]
+    User["👤 사용자 User<br/>자연어로 작업 지시 / 팀 요청"]
+    Leader["🎯 팀 리더 Leader<br/>TeamCreate · Task spawn<br/>TaskCreate · TaskUpdate<br/>SendMessage"]
+    A["🤖 팀원 A<br/>독립 인스턴스<br/>TaskList · TaskUpdate<br/>SendMessage · DM/토론"]
+    B["🤖 팀원 B<br/>독립 인스턴스<br/>TaskList · TaskUpdate<br/>SendMessage · DM/토론"]
+    C["🤖 팀원 C<br/>독립 인스턴스<br/>TaskList · TaskUpdate<br/>SendMessage · DM/토론"]
+    Tasks["📋 공유 태스크 목록<br/>~/.claude/tasks/team/<br/>task-1.json pending<br/>task-2.json in_progress<br/>task-3.json completed"]
 
     User --> Leader
     Leader --> A
@@ -818,12 +955,13 @@ flowchart TD
         <div class="flow-step-content">
           <h4>팀 생성 (TeamCreate)</h4>
           <p>사용자가 자연어로 팀 작업을 요청하면 리더가 <code>TeamCreate</code> 도구를 호출합니다.</p>
-          <pre><code><span class="comment">// 내부적으로 수행되는 작업:</span>
-<span class="comment">// 1. ~/.claude/teams/{team-name}/config.json 생성</span>
-<span class="comment">// 2. ~/.claude/tasks/{team-name}/ 디렉터리 생성</span>
-<span class="comment">// 3. 리더를 첫 번째 멤버로 등록</span>
-
-TeamCreate({
+          <p>내부적으로 수행되는 작업:</p>
+          <ol>
+            <li><code>~/.claude/teams/{team-name}/config.json</code> 생성</li>
+            <li><code>~/.claude/tasks/{team-name}/</code> 디렉터리 생성</li>
+            <li>리더를 첫 번째 멤버로 등록</li>
+          </ol>
+          <pre><code>TeamCreate({
   team_name: <span class="string">"auth-api"</span>,
   description: <span class="string">"사용자 인증 API 구현"</span>
 })</code></pre>
@@ -842,8 +980,8 @@ TeamCreate({
   subject: <span class="string">"JWT 토큰 검증 미들웨어 구현"</span>,
   description: <span class="string">"Express 미들웨어로 JWT 토큰을 검증..."</span>,
   activeForm: <span class="string">"Implementing JWT middleware"</span>
-})
-<span class="comment">// → ~/.claude/tasks/auth-api/task-001.json 생성</span></code></pre>
+})</code></pre>
+          <div class="code-result"><code>~/.claude/tasks/auth-api/task-001.json</code> 생성</div>
           <p>각 태스크는 JSON 파일로 저장됩니다. <code>blockedBy</code>로 의존성을 설정하면, 해당 태스크가 완료될 때까지 차단됩니다.</p>
         </div>
       </div>
@@ -861,8 +999,8 @@ TeamCreate({
   name: <span class="string">"backend-dev"</span>,
   team_name: <span class="string">"auth-api"</span>,
   prompt: <span class="string">"백엔드 개발을 담당합니다. TaskList를 확인하고 작업을 시작하세요."</span>
-})
-<span class="comment">// → config.json의 members에 자동 등록</span></code></pre>
+})</code></pre>
+          <div class="code-result"><code>config.json</code>의 members에 자동 등록</div>
           <p>팀원은 생성될 때 프로젝트의 <code>CLAUDE.md</code>, MCP 서버, 스킬 등을 로드하지만 리더의 대화 기록은 받지 않습니다.</p>
         </div>
       </div>
@@ -875,14 +1013,12 @@ TeamCreate({
         <div class="flow-step-content">
           <h4>작업 수행 및 조율</h4>
           <p>팀원들이 <code>TaskList</code>에서 작업을 확인하고, <code>TaskUpdate</code>로 상태를 변경하며, <code>SendMessage</code>로 소통합니다.</p>
-          <pre><code><span class="comment">// 팀원이 작업 시작</span>
-TaskUpdate({ taskId: <span class="string">"task-001"</span>, status: <span class="string">"in_progress"</span> })
-
-<span class="comment">// 작업 완료</span>
-TaskUpdate({ taskId: <span class="string">"task-001"</span>, status: <span class="string">"completed"</span> })
-
-<span class="comment">// 다른 팀원에게 메시지</span>
-SendMessage({
+          <div class="code-step-label">팀원이 작업 시작</div>
+          <pre><code>TaskUpdate({ taskId: <span class="string">"task-001"</span>, status: <span class="string">"in_progress"</span> })</code></pre>
+          <div class="code-step-label">작업 완료</div>
+          <pre><code>TaskUpdate({ taskId: <span class="string">"task-001"</span>, status: <span class="string">"completed"</span> })</code></pre>
+          <div class="code-step-label">다른 팀원에게 메시지</div>
+          <pre><code>SendMessage({
   type: <span class="string">"message"</span>,
   recipient: <span class="string">"tester"</span>,
   content: <span class="string">"인증 모듈 구현 완료. 테스트 시작해주세요."</span>
@@ -899,14 +1035,11 @@ SendMessage({
         <div class="flow-step-content">
           <h4>팀원 종료 및 정리</h4>
           <p>모든 작업이 완료되면 리더가 팀원에게 종료를 요청하고, 팀 리소스를 정리합니다.</p>
-          <pre><code><span class="comment">// 팀원 종료 요청</span>
-SendMessage({ type: <span class="string">"shutdown_request"</span>, recipient: <span class="string">"backend-dev"</span> })
-
-<span class="comment">// 팀원이 승인하면 자동 종료</span>
-<span class="comment">// 모든 팀원 종료 후 팀 정리</span>
-TeamDelete()
-<span class="comment">// → ~/.claude/teams/{team-name}/ 삭제</span>
-<span class="comment">// → ~/.claude/tasks/{team-name}/ 삭제</span></code></pre>
+          <div class="code-step-label">팀원 종료 요청</div>
+          <pre><code>SendMessage({ type: <span class="string">"shutdown_request"</span>, recipient: <span class="string">"backend-dev"</span> })</code></pre>
+          <div class="code-step-label">팀원이 승인하면 자동 종료 → 모든 팀원 종료 후 팀 정리</div>
+          <pre><code>TeamDelete()</code></pre>
+          <div class="code-result"><code>~/.claude/teams/{team-name}/</code> 삭제, <code>~/.claude/tasks/{team-name}/</code> 삭제</div>
         </div>
       </div>
     </div>
@@ -1106,13 +1239,13 @@ sequenceDiagram
       </div>
     </div>
 
-    <pre><code><span class="comment">// settings.json에서 모드 설정</span>
-{
-  <span class="string">"teammateMode"</span>: <span class="string">"auto"</span>  <span class="comment">// "auto" | "in-process" | "tmux"</span>
-}
-
-<span class="comment">// 또는 CLI 플래그로 오버라이드</span>
-<span class="comment">// claude --teammate-mode in-process</span></code></pre>
+    <div class="code-source">settings.json</div>
+    <pre><code>{
+  <span class="string">"teammateMode"</span>: <span class="string">"auto"</span>
+}</code></pre>
+    <p>사용 가능한 값: <code>"auto"</code> | <code>"in-process"</code> | <code>"tmux"</code></p>
+    <p>또는 CLI 플래그로 오버라이드:</p>
+    <pre><code>claude --teammate-mode in-process</code></pre>
   </section>
 
   <!-- 1.8 Subagent vs Teams -->
@@ -1226,23 +1359,23 @@ flowchart TD
         direction TB
         Leader["🎯 리더"]
         Teammates["🤖 팀원들"]
-        TF["📁 ~/.claude/tasks/team/*.json\n태스크 파일 - 로컬"]
+        TF["📁 ~/.claude/tasks/team/*.json<br/>태스크 파일 - 로컬"]
         Leader -- 조율 --- Teammates
         Leader -->|TaskCreate / TaskUpdate| TF
         Teammates -->|TaskUpdate - status 변경| TF
     end
 
-    TF --> Hooks["⚡ Hooks\nPostToolUse"]
-    TF --> Watch["👁 Watch\nchokidar 파일감시"]
-    TF --> Manual["🖥 Manual\nccteams sync"]
+    TF --> Hooks["⚡ Hooks<br/>PostToolUse"]
+    TF --> Watch["👁 Watch<br/>chokidar 파일감시"]
+    TF --> Manual["🖥 Manual<br/>ccteams sync"]
 
     Hooks --> CLI
     Watch --> CLI
     Manual --> CLI
 
-    CLI["⚙ ccteams CLI\n1. Lock 획득\n2. 태스크 읽기\n3. 해시 비교\n4. GitHub 동기화\n5. 상태 저장\n6. Lock 해제"]
+    CLI["⚙ ccteams CLI<br/>1. Lock 획득<br/>2. 태스크 읽기<br/>3. 해시 비교<br/>4. GitHub 동기화<br/>5. 상태 저장<br/>6. Lock 해제"]
 
-    CLI --> GH["🐙 GitHub\nIssues - Projects V2\nLabels - Sub-issues - Branches"]
+    CLI --> GH["🐙 GitHub<br/>Issues - Projects V2<br/>Labels - Sub-issues - Branches"]
       </pre>
     </div>
 
@@ -1266,8 +1399,8 @@ flowchart TD
         <div class="flow-step-content">
           <h4>분산 락 획득</h4>
           <p><code>.ccteams-sync.{teamName}.lock</code> 파일을 exclusive create(<code>flag: 'wx'</code>)로 생성합니다. 이미 존재하면 2분 이상된 stale 락인지 확인 후, stale이면 삭제 후 재시도합니다.</p>
-          <pre><code><span class="comment">// src/utils/lock.ts - acquireLock()</span>
-<span class="keyword">await</span> fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="string">'wx'</span> })</code></pre>
+          <div class="code-source">src/utils/lock.ts — acquireLock()</div>
+          <pre><code><span class="keyword">await</span> fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="string">'wx'</span> })</code></pre>
           <ul>
             <li><code>flag: 'wx'</code> = exclusive create: 파일이 이미 존재하면 EEXIST 에러</li>
             <li>stale threshold: <strong>120초</strong> (2분) &mdash; 이보다 오래된 락은 자동 삭제</li>
@@ -1346,9 +1479,8 @@ git rev-parse --abbrev-ref HEAD     <span class="comment">→ branch name</span>
           <h4>필드 옵션 리프레시</h4>
           <p>GitHub Project의 현재 필드 옵션 ID를 새로 조회합니다. GitHub는 <code>updateFieldOptions</code> 호출 시 <strong>모든 option ID를 재할당</strong>하므로 이 단계가 필수적입니다.</p>
           <p><code>src/core/sync-engine.ts</code>의 <code>refreshSelectOptions()</code> 동작:</p>
-          <pre><code><span class="keyword">const</span> fields = <span class="keyword">await</span> <span class="func">getProjectFields</span>(project.id)
-<span class="comment">// → 라이브 프로젝트에서 최신 옵션 ID 조회</span>
-<span class="comment">// → statusOptions, ownerOptions 모두 갱신</span></code></pre>
+          <pre><code><span class="keyword">const</span> fields = <span class="keyword">await</span> <span class="func">getProjectFields</span>(project.id)</code></pre>
+          <div class="code-result">라이브 프로젝트에서 최신 옵션 ID 조회, <code>statusOptions</code> · <code>ownerOptions</code> 모두 갱신</div>
           <div class="info-box warning">
             <strong>GitHub ID 재할당 문제</strong>
             <p>Owner 옵션을 추가/삭제하면 GitHub가 <strong>모든 기존 option ID를 재할당</strong>합니다. 따라서 옵션 변경 후 기존 아이템의 필드값을 새 ID로 재설정해야 합니다.</p>
@@ -1462,8 +1594,9 @@ git rev-parse --abbrev-ref HEAD     <span class="comment">→ branch name</span>
         <div class="flow-step-content">
           <h4>상태 저장 및 락 해제</h4>
           <p>업데이트된 동기화 상태를 JSON으로 저장하고 락을 해제합니다.</p>
-          <pre><code><span class="keyword">await</span> <span class="func">saveSyncState</span>(state, teamName)  <span class="comment">// → .ccteams-sync.{teamName}.json</span>
-<span class="keyword">await</span> <span class="func">releaseLock</span>(lockPath)            <span class="comment">// → .lock 파일 삭제</span></code></pre>
+          <pre><code><span class="keyword">await</span> <span class="func">saveSyncState</span>(state, teamName)
+<span class="keyword">await</span> <span class="func">releaseLock</span>(lockPath)</code></pre>
+          <div class="code-result"><code>.ccteams-sync.{teamName}.json</code> 저장, <code>.lock</code> 파일 삭제</div>
           <p>최종 반환되는 <code>SyncResult</code>:</p>
           <pre><code>{ created: N, updated: N, archived: N, skipped: N, errors: N }</code></pre>
         </div>
@@ -1480,10 +1613,10 @@ git rev-parse --abbrev-ref HEAD     <span class="comment">→ branch name</span>
     <div class="mermaid-wrapper">
       <pre class="mermaid">
 flowchart TD
-    A["🤖 에이전트 팀원이\n태스크 상태 변경"]
-    B["TaskCreate / TaskUpdate\nClaude Code 내부 도구"]
-    C["⚡ PostToolUse Hook 트리거\n\nmatcher: TaskCreate or TaskUpdate\nClaude Code Hooks 시스템"]
-    D["ccteams sync --quiet\n비동기 실행 async: true\n\n1. Lock 획득\n2. 태스크 읽기\n3. 변경분 감지\n4. GitHub 동기화\n5. Lock 해제"]
+    A["🤖 에이전트 팀원이<br/>태스크 상태 변경"]
+    B["TaskCreate / TaskUpdate<br/>Claude Code 내부 도구"]
+    C["⚡ PostToolUse Hook 트리거<br/><br/>matcher: TaskCreate or TaskUpdate<br/>Claude Code Hooks 시스템"]
+    D["ccteams sync --quiet<br/>비동기 실행 async: true<br/><br/>1. Lock 획득<br/>2. 태스크 읽기<br/>3. 변경분 감지<br/>4. GitHub 동기화<br/>5. Lock 해제"]
 
     A --> B --> C --> D
       </pre>
@@ -1640,9 +1773,8 @@ flowchart TD
     <p>ccteams는 <strong>SHA-256 해싱</strong>을 사용하여 효율적인 변경 감지를 수행합니다. 모든 태스크마다 전체 필드를 비교하는 대신, 해시값만 비교합니다.</p>
 
     <h3>해시 계산</h3>
-    <pre><code><span class="comment">// src/core/field-mapper.ts - computeTaskHash()</span>
-
-<span class="keyword">function</span> <span class="func">computeTaskHash</span>(task: Task, teamName: <span class="type">string</span>): <span class="type">string</span> {
+    <div class="code-source">src/core/field-mapper.ts — computeTaskHash()</div>
+    <pre><code><span class="keyword">function</span> <span class="func">computeTaskHash</span>(task: Task, teamName: <span class="type">string</span>): <span class="type">string</span> {
   <span class="keyword">const</span> normalized = {
     subject:     task.subject,
     description: task.description,
@@ -1661,11 +1793,11 @@ flowchart TD
       <pre class="mermaid">
 flowchart TD
     Read["📁 태스크 파일 읽기"]
-    Hash["computeTaskHash - task\ncurrentHash SHA-256 생성"]
-    Lookup["sync state에서 매핑 조회\nfindMapping에서 lastHash 가져옴"]
-    Compare{"currentHash\n===\nlastHash ?"}
-    Skip["✅ SKIP\nAPI 호출 없음"]
-    Update["🔄 UPDATE\nIssue 제목/본문 업데이트\n커스텀 필드 재설정\nlastHash 갱신"]
+    Hash["computeTaskHash - task<br/>currentHash SHA-256 생성"]
+    Lookup["sync state에서 매핑 조회<br/>findMapping에서 lastHash 가져옴"]
+    Compare{"currentHash<br/>===<br/>lastHash ?"}
+    Skip["✅ SKIP<br/>API 호출 없음"]
+    Update["🔄 UPDATE<br/>Issue 제목/본문 업데이트<br/>커스텀 필드 재설정<br/>lastHash 갱신"]
 
     Read --> Hash --> Lookup --> Compare
     Compare -->|YES| Skip
@@ -1714,18 +1846,18 @@ flowchart TD
 flowchart LR
     subgraph Claude["Claude Code Tasks"]
         direction TB
-        TA["Task A\nno deps"]
-        TB["Task B\nblockedBy A"]
-        TC["Task C\nblockedBy B"]
+        TA["Task A<br/>no deps"]
+        TB["Task B<br/>blockedBy A"]
+        TC["Task C<br/>blockedBy B"]
         TA -->|blockedBy| TB
         TB -->|blockedBy| TC
     end
 
     subgraph GH["GitHub Issues"]
         direction TB
-        I1["Issue #1\nroot"]
-        I2["Issue #2\nchild of #1"]
-        I3["Issue #3\nchild of #2"]
+        I1["Issue #1<br/>root"]
+        I2["Issue #2<br/>child of #1"]
+        I3["Issue #3<br/>child of #2"]
         I1 -->|parent| I2
         I2 -->|parent| I3
     end
@@ -1761,11 +1893,11 @@ flowchart LR
       <pre class="mermaid">
 flowchart TD
     CWD["📂 에이전트 작업 디렉터리 cwd"]
-    Detect["1. 미커밋 변경사항 감지\ngit status"]
-    Commit["2. auto-commit 생성\nccteams agent@team: task-subject"]
-    SHA["3. HEAD SHA 확인\ngit rev-parse HEAD"]
-    Branch["4. GitHub에 브랜치 ref 생성\nccteams/team/member"]
-    Link["5. Issue에 브랜치 링크\nDevelopment 패널에 표시"]
+    Detect["1. 미커밋 변경사항 감지<br/>git status"]
+    Commit["2. auto-commit 생성<br/>ccteams agent@team: task-subject"]
+    SHA["3. HEAD SHA 확인<br/>git rev-parse HEAD"]
+    Branch["4. GitHub에 브랜치 ref 생성<br/>ccteams/team/member"]
+    Link["5. Issue에 브랜치 링크<br/>Development 패널에 표시"]
 
     CWD --> Detect --> Commit --> SHA --> Branch --> Link
       </pre>
@@ -2018,33 +2150,150 @@ sequenceDiagram
 </script>
 
 <script>
-  // Click-to-expand diagram modal
+  // Click-to-expand diagram modal with wheel zoom + drag pan
   document.addEventListener('DOMContentLoaded', () => {
-    // Create modal elements
     const overlay = document.createElement('div');
     overlay.className = 'diagram-modal-overlay';
 
     const content = document.createElement('div');
     content.className = 'diagram-modal-content';
 
+    const svgContainer = document.createElement('div');
+    svgContainer.className = 'diagram-modal-svg-container';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'diagram-modal-close';
+    closeBtn.textContent = 'ESC / Close';
+
+    const zoomLevel = document.createElement('div');
+    zoomLevel.className = 'diagram-modal-zoom-level';
+    zoomLevel.textContent = '100%';
+
+    const controls = document.createElement('div');
+    controls.className = 'diagram-modal-controls';
+    const zoomInBtn = document.createElement('button');
+    zoomInBtn.textContent = '+';
+    zoomInBtn.title = 'Zoom in';
+    const zoomOutBtn = document.createElement('button');
+    zoomOutBtn.textContent = '−';
+    zoomOutBtn.title = 'Zoom out';
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = '⟲';
+    resetBtn.title = 'Reset zoom';
+    controls.appendChild(zoomOutBtn);
+    controls.appendChild(resetBtn);
+    controls.appendChild(zoomInBtn);
+
     const hint = document.createElement('div');
     hint.className = 'diagram-modal-hint';
-    hint.textContent = 'Click anywhere or press ESC to close';
+    hint.textContent = 'Scroll to zoom · Drag to pan · ESC to close';
 
+    content.appendChild(closeBtn);
+    content.appendChild(zoomLevel);
+    content.appendChild(svgContainer);
+    content.appendChild(controls);
     overlay.appendChild(content);
     overlay.appendChild(hint);
     document.body.appendChild(overlay);
 
+    // Zoom/pan state
+    let scale = 1;
+    let panX = 0, panY = 0;
+    let isDragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let dragPanStartX = 0, dragPanStartY = 0;
+    const MIN_SCALE = 0.3;
+    const MAX_SCALE = 5;
+
+    function updateTransform() {
+      const svg = svgContainer.querySelector('svg');
+      if (svg) {
+        svg.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      }
+      zoomLevel.textContent = Math.round(scale * 100) + '%';
+    }
+
+    function resetView() {
+      scale = 1;
+      panX = 0;
+      panY = 0;
+      updateTransform();
+    }
+
+    function zoomTo(newScale, centerX, centerY) {
+      const clampedScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+      if (centerX !== undefined && centerY !== undefined) {
+        const ratio = clampedScale / scale;
+        panX = centerX - ratio * (centerX - panX);
+        panY = centerY - ratio * (centerY - panY);
+      }
+      scale = clampedScale;
+      updateTransform();
+    }
+
+    // Wheel zoom (prevent browser zoom)
+    svgContainer.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = svgContainer.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      zoomTo(scale * factor, mouseX, mouseY);
+    }, { passive: false });
+
+    // Drag to pan
+    svgContainer.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragPanStartX = panX;
+      dragPanStartY = panY;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      panX = dragPanStartX + (e.clientX - dragStartX);
+      panY = dragPanStartY + (e.clientY - dragStartY);
+      updateTransform();
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    // Button controls
+    zoomInBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rect = svgContainer.getBoundingClientRect();
+      zoomTo(scale * 1.3, rect.width / 2, rect.height / 2);
+    });
+    zoomOutBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rect = svgContainer.getBoundingClientRect();
+      zoomTo(scale / 1.3, rect.width / 2, rect.height / 2);
+    });
+    resetBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      resetView();
+    });
+
     // Close modal
     function closeModal() {
       overlay.classList.remove('active');
-      content.innerHTML = '';
+      svgContainer.innerHTML = '';
+      resetView();
     }
 
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay || e.target === content) {
-        closeModal();
-      }
+      if (e.target === overlay) closeModal();
     });
 
     document.addEventListener('keydown', (e) => {
@@ -2053,54 +2302,61 @@ sequenceDiagram
       }
     });
 
-    // Wait for Mermaid to render, then attach click handlers
-    const observer = new MutationObserver(() => {
+    // Open modal: clone SVG, fit to container
+    function openModal(svgOriginal) {
+      const clone = svgOriginal.cloneNode(true);
+      clone.removeAttribute('width');
+      clone.removeAttribute('height');
+      clone.style.width = 'auto';
+      clone.style.height = 'auto';
+      clone.style.maxWidth = 'none';
+      clone.style.maxHeight = 'none';
+      clone.style.transformOrigin = '0 0';
+
+      svgContainer.innerHTML = '';
+      svgContainer.appendChild(clone);
+
+      // Fit the SVG in the container
+      resetView();
+      overlay.classList.add('active');
+
+      requestAnimationFrame(() => {
+        const cRect = svgContainer.getBoundingClientRect();
+        const sRect = clone.getBoundingClientRect();
+        if (sRect.width > 0 && sRect.height > 0) {
+          const fitScale = Math.min(
+            cRect.width / sRect.width * 0.9,
+            cRect.height / sRect.height * 0.9,
+            2
+          );
+          scale = fitScale;
+          panX = (cRect.width - sRect.width * fitScale) / 2;
+          panY = (cRect.height - sRect.height * fitScale) / 2;
+          updateTransform();
+        }
+      });
+    }
+
+    // Bind click handlers to mermaid wrappers
+    function bindWrappers() {
       document.querySelectorAll('.mermaid-wrapper').forEach(wrapper => {
         if (wrapper.dataset.modalBound) return;
         wrapper.dataset.modalBound = 'true';
 
         wrapper.addEventListener('click', () => {
           const svg = wrapper.querySelector('svg');
-          if (!svg) return;
-
-          const clone = svg.cloneNode(true);
-          clone.style.maxWidth = '100%';
-          clone.style.height = 'auto';
-          clone.removeAttribute('width');
-          clone.setAttribute('width', '100%');
-
-          content.innerHTML = '';
-          content.appendChild(clone);
-          overlay.classList.add('active');
+          if (svg) openModal(svg);
         });
       });
-    });
+    }
 
+    const observer = new MutationObserver(bindWrappers);
     observer.observe(document.body, { childList: true, subtree: true });
 
-    // Also try binding immediately in case Mermaid already rendered
     setTimeout(() => {
-      document.querySelectorAll('.mermaid-wrapper').forEach(wrapper => {
-        if (wrapper.dataset.modalBound) return;
-        wrapper.dataset.modalBound = 'true';
-
-        wrapper.addEventListener('click', () => {
-          const svg = wrapper.querySelector('svg');
-          if (!svg) return;
-
-          const clone = svg.cloneNode(true);
-          clone.style.maxWidth = '100%';
-          clone.style.height = 'auto';
-          clone.removeAttribute('width');
-          clone.setAttribute('width', '100%');
-
-          content.innerHTML = '';
-          content.appendChild(clone);
-          overlay.classList.add('active');
-        });
-      });
+      bindWrappers();
       observer.disconnect();
-    }, 3000);
+    }, 4000);
   });
 </script>
 </body>
