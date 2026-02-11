@@ -1061,10 +1061,10 @@ flowchart TD
       <pre class="mermaid">
 stateDiagram-v2
     [*] --> pending
-    pending --> in_progress : TaskUpdate - status: in_progress
-    in_progress --> completed : TaskUpdate - status: completed
-    pending --> blocked : blockedBy 설정됨
-    blocked --> pending : 의존 태스크 completed 시 auto unblock
+    pending --> in_progress : TaskUpdate → in_progress
+    in_progress --> completed : TaskUpdate → completed
+    pending --> blocked : blockedBy 의존성 설정
+    blocked --> pending : 의존 태스크 완료 시 자동 해제
       </pre>
     </div>
 
@@ -2302,9 +2302,28 @@ sequenceDiagram
       }
     });
 
-    // Open modal: clone SVG, fit to container
+    // Open modal: serialize SVG and re-create with unique IDs
     function openModal(svgOriginal) {
-      const clone = svgOriginal.cloneNode(true);
+      const uid = 'zm' + Date.now() + '_';
+      let markup = svgOriginal.outerHTML;
+
+      // Collect all IDs in the SVG
+      const idSet = new Set();
+      markup.replace(/\bid="([^"]+)"/g, (_, id) => { idSet.add(id); return _; });
+
+      // Rewrite IDs and all references to them to avoid conflicts
+      idSet.forEach(oldId => {
+        const newId = uid + oldId;
+        const esc = oldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        markup = markup.replace(new RegExp('id="' + esc + '"', 'g'), 'id="' + newId + '"');
+        markup = markup.replace(new RegExp('url\\(#' + esc + '\\)', 'g'), 'url(#' + newId + ')');
+        markup = markup.replace(new RegExp('href="#' + esc + '"', 'g'), 'href="#' + newId + '"');
+      });
+
+      svgContainer.innerHTML = markup;
+      const clone = svgContainer.querySelector('svg');
+      if (!clone) return;
+
       clone.removeAttribute('width');
       clone.removeAttribute('height');
       clone.style.width = 'auto';
@@ -2313,10 +2332,6 @@ sequenceDiagram
       clone.style.maxHeight = 'none';
       clone.style.transformOrigin = '0 0';
 
-      svgContainer.innerHTML = '';
-      svgContainer.appendChild(clone);
-
-      // Fit the SVG in the container
       resetView();
       overlay.classList.add('active');
 
