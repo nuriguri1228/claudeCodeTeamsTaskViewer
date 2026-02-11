@@ -323,24 +323,23 @@
       margin-bottom: 4px;
     }
 
-    /* Flow diagrams (ASCII art style) */
-    .diagram {
+    /* Mermaid diagrams */
+    .mermaid-wrapper {
       background: var(--bg-secondary);
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 24px;
       margin: 20px 0;
       overflow-x: auto;
-      font-family: 'SFMono-Regular', Consolas, monospace;
-      font-size: 13px;
-      line-height: 1.5;
-      color: var(--text-secondary);
-      white-space: pre;
+      display: flex;
+      justify-content: center;
     }
 
-    .diagram .highlight {
-      color: var(--accent);
-      font-weight: 600;
+    .mermaid-wrapper pre.mermaid {
+      background: none;
+      border: none;
+      padding: 0;
+      margin: 0;
     }
 
     /* Flow steps */
@@ -663,48 +662,27 @@
     </table>
 
     <h3>아키텍처 다이어그램</h3>
-    <div class="diagram">
-                        ┌──────────────────────────────────────┐
-                        │           <span class="highlight">사용자 (User)</span>                │
-                        │      자연어로 작업 지시 / 팀 요청       │
-                        └──────────────┬───────────────────────┘
-                                       │
-                                       ▼
-                        ┌──────────────────────────────────────┐
-                        │         <span class="highlight">팀 리더 (Leader)</span>              │
-                        │                                      │
-                        │  TeamCreate  →  팀 생성               │
-                        │  Task(spawn) →  팀원 스폰             │
-                        │  TaskCreate  →  작업 생성             │
-                        │  TaskUpdate  →  작업 할당             │
-                        │  SendMessage →  메시지 전달           │
-                        └───────┬─────────┬─────────┬──────────┘
-                                │         │         │
-                    ┌───────────┘         │         └───────────┐
-                    ▼                     ▼                     ▼
-         ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-         │   <span class="highlight">팀원 A</span>        │   │   <span class="highlight">팀원 B</span>        │   │   <span class="highlight">팀원 C</span>        │
-         │ (독립 인스턴스)  │   │ (독립 인스턴스)  │   │ (독립 인스턴스)  │
-         │                 │   │                 │   │                 │
-         │ TaskList → 확인 │   │ TaskList → 확인 │   │ TaskList → 확인 │
-         │ TaskUpdate →    │   │ TaskUpdate →    │   │ TaskUpdate →    │
-         │   작업 상태갱신  │   │   작업 상태갱신  │   │   작업 상태갱신  │
-         │ SendMessage →   │◄─►│ SendMessage →   │◄─►│ SendMessage →   │
-         │   DM/토론       │   │   DM/토론       │   │   DM/토론       │
-         └────────┬────────┘   └────────┬────────┘   └────────┬────────┘
-                  │                     │                     │
-                  └─────────────┬───────┘─────────────────────┘
-                                │
-                                ▼
-                  ┌──────────────────────────────┐
-                  │    <span class="highlight">공유 태스크 목록</span>             │
-                  │  ~/.claude/tasks/{team}/      │
-                  │                              │
-                  │  task-1.json  (pending)       │
-                  │  task-2.json  (in_progress)   │
-                  │  task-3.json  (completed)     │
-                  │  task-4.json  (blocked)       │
-                  └──────────────────────────────┘</div>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+flowchart TD
+    User["👤 사용자 (User)\n자연어로 작업 지시 / 팀 요청"]
+    Leader["🎯 팀 리더 (Leader)\nTeamCreate · Task(spawn)\nTaskCreate · TaskUpdate\nSendMessage"]
+    A["🤖 팀원 A\n(독립 인스턴스)\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
+    B["🤖 팀원 B\n(독립 인스턴스)\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
+    C["🤖 팀원 C\n(독립 인스턴스)\nTaskList · TaskUpdate\nSendMessage · DM/토론"]
+    Tasks["📋 공유 태스크 목록\n~/.claude/tasks/{team}/\ntask-1.json (pending)\ntask-2.json (in_progress)\ntask-3.json (completed)"]
+
+    User --> Leader
+    Leader --> A
+    Leader --> B
+    Leader --> C
+    A <-.->|메시지| B
+    B <-.->|메시지| C
+    A --> Tasks
+    B --> Tasks
+    C --> Tasks
+      </pre>
+    </div>
 
     <h3>팀 구성 파일 구조</h3>
     <p>팀이 생성되면 두 곳에 데이터가 저장됩니다.</p>
@@ -866,19 +844,18 @@ TeamDelete()
     <h3>태스크 상태 머신</h3>
     <p>모든 태스크는 세 가지 상태를 가지며, 의존성(blockedBy)에 의해 차단될 수 있습니다.</p>
 
-    <div class="diagram">
-    ┌─────────┐     TaskUpdate      ┌─────────────┐    TaskUpdate     ┌───────────┐
-    │ <span class="highlight">pending</span> │ ───────────────────► │ <span class="highlight">in_progress</span> │ ────────────────► │ <span class="highlight">completed</span> │
-    │         │   status:in_progress │             │   status:completed│           │
-    └─────────┘                      └─────────────┘                   └───────────┘
-         │                                                                   │
-         │  blockedBy: ["task-B"]                                           │
-         │                                                                   │
-         ▼                                                                   │
-    ┌──────────┐                                                             │
-    │ <span class="highlight">blocked</span>  │  ◄── task-B가 completed 되면 자동으로 unblock ─────────────┘
-    │(implicit)│
-    └──────────┘</div>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+stateDiagram-v2
+    [*] --> pending
+    pending --> in_progress : TaskUpdate\n(status: in_progress)
+    in_progress --> completed : TaskUpdate\n(status: completed)
+    pending --> blocked : blockedBy: ["task-B"]
+    blocked --> pending : task-B completed\n→ auto unblock
+
+    note right of completed : 의존된 태스크가\n자동으로 unblock됨
+      </pre>
+    </div>
 
     <h3>태스크 도구 상세</h3>
 
@@ -961,23 +938,25 @@ TeamDelete()
     </table>
 
     <h3>메시지 흐름</h3>
-    <div class="diagram">
-    팀원 A ──── SendMessage(type:"message") ────► 팀원 B
-                recipient: "팀원B"
-                content: "인증 모듈 구현 완료"
-                                                   │
-                                                   ▼
-                                           [자동 전달 / 큐잉]
-                                                   │
-                                                   ▼
-                                           팀원 B가 메시지 수신
-                                           (idle 상태에서도 수신 가능)
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+sequenceDiagram
+    participant A as 🤖 팀원 A
+    participant B as 🤖 팀원 B
+    participant C as 🤖 팀원 C
+    participant L as 🎯 리더
 
-    리더 ──── SendMessage(type:"broadcast") ────► 모든 팀원
-              content: "긴급: API 스키마 변경됨"     │
-                                                   ├──► 팀원 A
-                                                   ├──► 팀원 B
-                                                   └──► 팀원 C</div>
+    Note over A,B: Direct Message (1:1)
+    A->>B: SendMessage(type: "message")
+    Note right of B: 자동 전달 / 큐잉
+    B-->>A: 응답 메시지
+
+    Note over L,C: Broadcast (1:N)
+    L->>A: broadcast: "긴급: API 스키마 변경됨"
+    L->>B: broadcast: "긴급: API 스키마 변경됨"
+    L->>C: broadcast: "긴급: API 스키마 변경됨"
+      </pre>
+    </div>
 
     <div class="info-box tip">
       <strong>유휴(Idle) 상태</strong>
@@ -1162,54 +1141,29 @@ TeamDelete()
     <h2>Agent Teams Flow에서 ccteams의 위치</h2>
     <p>ccteams는 Agent Teams 시스템의 <strong>외부 관찰자(Observer)</strong> 역할을 합니다. 에이전트 팀의 내부 동작을 변경하지 않으면서, 태스크 파일의 변경 사항을 감지하고 GitHub에 반영합니다.</p>
 
-    <div class="diagram">
-    ┌─────────────────────────────────────────────────────────────────────┐
-    │                    <span class="highlight">Claude Code Agent Teams</span>                       │
-    │                                                                     │
-    │   리더 ◄──────────► 팀원들                                          │
-    │     │                  │                                            │
-    │     │ TaskCreate       │ TaskUpdate                                 │
-    │     │ TaskUpdate       │ (status 변경)                              │
-    │     ▼                  ▼                                            │
-    │   ┌────────────────────────────────┐                               │
-    │   │  ~/.claude/tasks/{team}/*.json  │  ◄── 태스크 파일 (로컬)       │
-    │   └────────────────┬───────────────┘                               │
-    │                    │                                                │
-    └────────────────────┼────────────────────────────────────────────────┘
-                         │
-         ┌───────────────┼──────────────────┐
-         │               │                  │
-         ▼               ▼                  ▼
-    ┌─────────┐    ┌──────────┐     ┌────────────┐
-    │  <span class="highlight">Hooks</span>   │    │  <span class="highlight">Watch</span>   │     │  <span class="highlight">Manual</span>    │   ← 트리거 방식
-    │PostTool │    │ chokidar │     │ ccteams    │
-    │ Use     │    │ 파일감시  │     │ sync       │
-    └────┬────┘    └────┬─────┘     └─────┬──────┘
-         │              │                  │
-         └──────────────┼──────────────────┘
-                        │
-                        ▼
-              ┌────────────────────┐
-              │    <span class="highlight">ccteams CLI</span>      │
-              │                    │
-              │  1. Lock 획득      │
-              │  2. 태스크 읽기    │
-              │  3. 해시 비교      │
-              │  4. GitHub 동기화  │
-              │  5. 상태 저장      │
-              │  6. Lock 해제      │
-              └─────────┬──────────┘
-                        │
-                        ▼
-              ┌────────────────────────────────────┐
-              │         <span class="highlight">GitHub</span>                       │
-              │                                    │
-              │  Issues (실제) ◄── 태스크 1:1 매핑  │
-              │  Projects V2   ◄── 칸반 보드       │
-              │  Labels        ◄── ccteams:{team}  │
-              │  Sub-issues    ◄── blockedBy 매핑  │
-              │  Branches      ◄── 에이전트별 브랜치│
-              └────────────────────────────────────┘</div>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+flowchart TD
+    subgraph CC["Claude Code Agent Teams"]
+        direction TB
+        Leader["🎯 리더"] <-->|조율| Teammates["🤖 팀원들"]
+        Leader -->|"TaskCreate\nTaskUpdate"| TF["📁 ~/.claude/tasks/{team}/*.json\n태스크 파일 (로컬)"]
+        Teammates -->|"TaskUpdate\n(status 변경)"| TF
+    end
+
+    TF --> Hooks["⚡ Hooks\nPostToolUse"]
+    TF --> Watch["👁️ Watch\nchokidar 파일감시"]
+    TF --> Manual["🖥️ Manual\nccteams sync"]
+
+    Hooks --> CLI
+    Watch --> CLI
+    Manual --> CLI
+
+    CLI["⚙️ ccteams CLI\n1. Lock 획득\n2. 태스크 읽기\n3. 해시 비교\n4. GitHub 동기화\n5. 상태 저장\n6. Lock 해제"]
+
+    CLI --> GH["🐙 GitHub\nIssues (실제) · Projects V2\nLabels · Sub-issues · Branches"]
+      </pre>
+    </div>
 
     <div class="info-box note">
       <strong>비침투적 설계</strong>
@@ -1232,10 +1186,12 @@ TeamDelete()
           <h4>분산 락 획득</h4>
           <p><code>.ccteams-sync.{teamName}.lock</code> 파일을 exclusive create(<code>flag: 'wx'</code>)로 생성합니다. 이미 존재하면 2분 이상된 stale 락인지 확인 후, stale이면 삭제 후 재시도합니다.</p>
           <pre><code><span class="comment">// src/utils/lock.ts - acquireLock()</span>
-fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="string">'wx'</span> })
-<span class="comment">// 'wx' = exclusive create: 파일이 이미 존재하면 EEXIST 에러</span>
-<span class="comment">// stale threshold: 120초 (2분)</span>
-<span class="comment">// polling: 최대 30초까지 1초 간격으로 재시도</span></code></pre>
+<span class="keyword">await</span> fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="string">'wx'</span> })</code></pre>
+          <ul>
+            <li><code>flag: 'wx'</code> = exclusive create: 파일이 이미 존재하면 EEXIST 에러</li>
+            <li>stale threshold: <strong>120초</strong> (2분) &mdash; 이보다 오래된 락은 자동 삭제</li>
+            <li>polling: 최대 <strong>30초</strong>까지 1초 간격으로 재시도</li>
+          </ul>
         </div>
       </div>
 
@@ -1247,14 +1203,18 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>동기화 상태 로드</h4>
           <p><code>.ccteams-sync.{teamName}.json</code>에서 이전 동기화 상태를 로드합니다. 파일이 없으면 자동으로 초기화(auto-init)합니다.</p>
-          <pre><code><span class="comment">// src/core/sync-state.ts - loadSyncState()</span>
-<span class="comment">// 로드되는 정보:</span>
-<span class="comment">//  - project: GitHub Project V2 메타데이터</span>
-<span class="comment">//  - fields: 커스텀 필드 ID 맵</span>
-<span class="comment">//  - statusOptions: Todo/In Progress/Done의 option ID</span>
-<span class="comment">//  - ownerOptions: Agent 이름별 option ID</span>
-<span class="comment">//  - items: 이전에 동기화된 태스크→Issue 매핑</span>
-<span class="comment">//  - labels: 생성된 라벨 ID 캐시</span></code></pre>
+          <p><code>src/core/sync-state.ts</code>의 <code>loadSyncState()</code>가 로드하는 정보:</p>
+          <table>
+            <thead><tr><th>필드</th><th>내용</th></tr></thead>
+            <tbody>
+              <tr><td><code>project</code></td><td>GitHub Project V2 메타데이터 (id, number, url, title)</td></tr>
+              <tr><td><code>fields</code></td><td>커스텀 필드 이름 → 필드 ID 맵</td></tr>
+              <tr><td><code>statusOptions</code></td><td>Todo / In Progress / Done의 option ID</td></tr>
+              <tr><td><code>ownerOptions</code></td><td>Agent 이름별 option ID</td></tr>
+              <tr><td><code>items</code></td><td>이전에 동기화된 태스크 → Issue 매핑 배열</td></tr>
+              <tr><td><code>labels</code></td><td>생성된 라벨 이름 → ID 캐시</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -1266,14 +1226,17 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>태스크 읽기 및 필터링</h4>
           <p><code>~/.claude/tasks/{teamName}/</code>의 모든 JSON 파일을 병렬로 읽고, 메타 태스크를 필터링합니다.</p>
-          <pre><code><span class="comment">// src/core/claude-reader.ts - readTeamTasks()</span>
-
-<span class="comment">// 필터링되는 메타 태스크:</span>
-<span class="comment">// 1. subject가 팀 멤버 이름과 일치하는 것</span>
-<span class="comment">// 2. subject가 다른 태스크의 owner와 일치하는 것</span>
-<span class="comment">// 3. description에 역할 할당 패턴이 있는 것:</span>
-<span class="comment">//    "You are the", "You are a", "Act as"</span>
-<span class="comment">//    "당신은", "에이전트입니다" (한국어 패턴)</span></code></pre>
+          <p><code>src/core/claude-reader.ts</code>의 <code>readTeamTasks()</code>가 필터링하는 메타 태스크:</p>
+          <ol>
+            <li><strong>멤버 이름 매칭</strong> &mdash; subject가 팀 멤버 이름과 일치하는 태스크</li>
+            <li><strong>Owner 매칭</strong> &mdash; subject가 다른 태스크의 owner와 일치하는 태스크</li>
+            <li><strong>역할 할당 패턴</strong> &mdash; description에 다음 패턴이 포함된 태스크:
+              <ul>
+                <li>영어: <code>"You are the"</code>, <code>"You are a"</code>, <code>"Act as"</code></li>
+                <li>한국어: <code>"당신은"</code>, <code>"에이전트입니다"</code></li>
+              </ul>
+            </li>
+          </ol>
           <p>이 필터링으로 Claude Code가 팀원 관리용으로 내부 생성한 태스크가 GitHub Issue로 만들어지는 것을 방지합니다.</p>
         </div>
       </div>
@@ -1286,13 +1249,10 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>에이전트별 Git 정보 수집</h4>
           <p>팀 config의 멤버별 <code>cwd</code>에서 git 브랜치와 HEAD SHA를 읽습니다.</p>
-          <pre><code><span class="comment">// src/core/sync-engine.ts - getAgentGitInfo()</span>
-
-<span class="comment">// 각 팀원의 작업 디렉터리에서:</span>
-<span class="comment">// - git rev-parse HEAD → commit SHA</span>
-<span class="comment">// - git rev-parse --abbrev-ref HEAD → branch name</span>
-
-<span class="comment">// 워크트리를 지원하므로 에이전트마다 다른 브랜치 가능</span></code></pre>
+          <p><code>src/core/sync-engine.ts</code>의 <code>getAgentGitInfo()</code>가 각 팀원의 작업 디렉터리에서 수집하는 정보:</p>
+          <pre><code>git rev-parse HEAD                  <span class="comment">→ commit SHA</span>
+git rev-parse --abbrev-ref HEAD     <span class="comment">→ branch name</span></code></pre>
+          <p>워크트리(worktree)를 지원하므로 에이전트마다 서로 다른 브랜치에서 작업할 수 있습니다.</p>
         </div>
       </div>
 
@@ -1304,12 +1264,14 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>필드 옵션 리프레시</h4>
           <p>GitHub Project의 현재 필드 옵션 ID를 새로 조회합니다. GitHub는 <code>updateFieldOptions</code> 호출 시 <strong>모든 option ID를 재할당</strong>하므로 이 단계가 필수적입니다.</p>
-          <pre><code><span class="comment">// src/core/sync-engine.ts - refreshSelectOptions()</span>
-<span class="comment">// getProjectFields() → 라이브 프로젝트에서 최신 옵션 조회</span>
-<span class="comment">// statusOptions, ownerOptions 모두 갱신</span>
-
-<span class="comment">// 이슈: Owner 옵션을 추가/삭제하면 모든 기존 ID가 변경됨</span>
-<span class="comment">// 해결: 옵션 변경 후 모든 기존 아이템의 필드값을 재설정</span></code></pre>
+          <p><code>src/core/sync-engine.ts</code>의 <code>refreshSelectOptions()</code> 동작:</p>
+          <pre><code><span class="keyword">const</span> fields = <span class="keyword">await</span> <span class="func">getProjectFields</span>(project.id)
+<span class="comment">// → 라이브 프로젝트에서 최신 옵션 ID 조회</span>
+<span class="comment">// → statusOptions, ownerOptions 모두 갱신</span></code></pre>
+          <div class="info-box warning">
+            <strong>GitHub ID 재할당 문제</strong>
+            <p>Owner 옵션을 추가/삭제하면 GitHub가 <strong>모든 기존 option ID를 재할당</strong>합니다. 따라서 옵션 변경 후 기존 아이템의 필드값을 새 ID로 재설정해야 합니다.</p>
+          </div>
         </div>
       </div>
 
@@ -1321,11 +1283,13 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>Owner 사전 등록</h4>
           <p>모든 태스크에서 고유한 owner 이름을 수집하고, GitHub Project의 "Agent (Owner)" Single Select 필드에 옵션으로 미리 등록합니다.</p>
-          <pre><code><span class="comment">// ensureOwnerOptions()</span>
-<span class="comment">// 1. 모든 태스크에서 unique owner 이름 수집</span>
-<span class="comment">// 2. 기존 옵션에 없는 이름이 있으면 updateFieldOptions() 호출</span>
-<span class="comment">// 3. ID가 재할당되므로 refreshSelectOptions() 다시 실행</span>
-<span class="comment">// 4. 기존 아이템들의 owner 필드를 새 ID로 업데이트 (pMap, concurrency=5)</span></code></pre>
+          <p><code>ensureOwnerOptions()</code>의 처리 순서:</p>
+          <ol>
+            <li>모든 태스크에서 unique owner 이름 수집</li>
+            <li>기존 옵션에 없는 이름이 있으면 <code>updateFieldOptions()</code> 호출</li>
+            <li>ID가 재할당되므로 <code>refreshSelectOptions()</code> 다시 실행</li>
+            <li>기존 아이템들의 owner 필드를 새 ID로 업데이트 (<code>pMap</code>, concurrency=5)</li>
+          </ol>
         </div>
       </div>
 
@@ -1337,16 +1301,18 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>의존성 정렬 및 새 Issue 생성</h4>
           <p>새 태스크를 <code>blockedBy</code> 의존성 레벨별로 정렬하고, 레벨 순서대로 Issue를 생성합니다.</p>
-          <pre><code><span class="comment">// sortByDependency() → 위상 정렬</span>
-<span class="comment">// Level 0: blockedBy가 없는 태스크</span>
-<span class="comment">// Level 1: Level 0에만 의존하는 태스크</span>
-<span class="comment">// Level 2: Level 0-1에 의존하는 태스크 ...</span>
-
-<span class="comment">// 레벨별 병렬 생성 (concurrency=5)</span>
-<span class="keyword">for</span> (<span class="keyword">const</span> level <span class="keyword">of</span> sortedLevels) {
-  <span class="keyword">await</span> pMap(level, createIssue, <span class="number">5</span>)
-  <span class="comment">// 같은 레벨은 병렬, 다른 레벨은 순차</span>
-  <span class="comment">// → parentIssueId가 반드시 존재</span>
+          <p><code>sortByDependency()</code>로 위상 정렬한 뒤 레벨별로 생성합니다:</p>
+          <table>
+            <thead><tr><th>레벨</th><th>포함 태스크</th><th>생성 방식</th></tr></thead>
+            <tbody>
+              <tr><td>Level 0</td><td><code>blockedBy</code>가 없는 태스크 (루트)</td><td rowspan="3">같은 레벨은 <strong>병렬</strong> (concurrency=5)<br>다른 레벨은 <strong>순차</strong></td></tr>
+              <tr><td>Level 1</td><td>Level 0에만 의존하는 태스크</td></tr>
+              <tr><td>Level N</td><td>Level 0~(N-1)에 의존하는 태스크</td></tr>
+            </tbody>
+          </table>
+          <pre><code><span class="keyword">for</span> (<span class="keyword">const</span> level <span class="keyword">of</span> sortedLevels) {
+  <span class="keyword">await</span> <span class="func">pMap</span>(level, createIssue, <span class="number">5</span>)
+  <span class="comment">// 순차 반복 → parentIssueId가 반드시 존재함을 보장</span>
 }</code></pre>
           <p>각 Issue 생성 시: Issue 생성 → Project에 추가 → 라벨 부착 → 모든 커스텀 필드 설정 → 동기화 상태에 매핑 저장</p>
         </div>
@@ -1382,11 +1348,11 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>삭제된 태스크 아카이브</h4>
           <p>동기화 상태에는 있지만 디스크에 없는 태스크를 찾아 Issue를 close하고 Project item을 archive합니다.</p>
-          <pre><code><span class="comment">// state.items에 있지만 현재 태스크에 없는 항목</span>
-<span class="keyword">for</span> (<span class="keyword">const</span> orphan <span class="keyword">of</span> orphanedItems) {
-  closeIssue(orphan.issueNodeId)
-  archiveItem(project.id, orphan.githubItemId)
-  removeMapping(state, orphan.taskId, teamName)
+          <p><code>state.items</code>에는 있지만 현재 태스크 파일에 없는 항목(삭제된 태스크)을 처리합니다:</p>
+          <pre><code><span class="keyword">for</span> (<span class="keyword">const</span> orphan <span class="keyword">of</span> orphanedItems) {
+  <span class="keyword">await</span> <span class="func">closeIssue</span>(orphan.issueNodeId)        <span class="comment">// GitHub Issue 닫기</span>
+  <span class="keyword">await</span> <span class="func">archiveItem</span>(project.id, orphan.githubItemId) <span class="comment">// Project에서 아카이브</span>
+  <span class="func">removeMapping</span>(state, orphan.taskId, teamName) <span class="comment">// 로컬 매핑 제거</span>
 }</code></pre>
         </div>
       </div>
@@ -1399,11 +1365,13 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>팀 요약 Issue 및 브랜치 링크</h4>
           <p>팀 전체 상태를 요약하는 Issue를 생성/업데이트하고, 에이전트별 브랜치를 GitHub에 푸시하여 연결합니다.</p>
-          <pre><code><span class="comment">// createTeamSummary()</span>
-<span class="comment">// 1. 에이전트별 cwd에서 auto-commit (변경사항이 있으면)</span>
-<span class="comment">// 2. ccteams/{teamName}/{memberName} 브랜치 생성/업데이트</span>
-<span class="comment">// 3. 요약 Issue에 태스크 목록 마크다운 테이블 작성</span>
-<span class="comment">// 4. 브랜치를 태스크 Issue에 링크 (Development 패널)</span></code></pre>
+          <p><code>createTeamSummary()</code>의 처리 순서:</p>
+          <ol>
+            <li>에이전트별 <code>cwd</code>에서 auto-commit (변경사항이 있으면)</li>
+            <li><code>ccteams/{teamName}/{memberName}</code> 브랜치 생성/업데이트</li>
+            <li>요약 Issue에 태스크 목록 마크다운 테이블 작성</li>
+            <li>브랜치를 태스크 Issue에 링크 (GitHub Development 패널)</li>
+          </ol>
         </div>
       </div>
 
@@ -1415,11 +1383,10 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
         <div class="flow-step-content">
           <h4>상태 저장 및 락 해제</h4>
           <p>업데이트된 동기화 상태를 JSON으로 저장하고 락을 해제합니다.</p>
-          <pre><code><span class="comment">// saveSyncState() → .ccteams-sync.{teamName}.json</span>
-<span class="comment">// releaseLock() → .ccteams-sync.{teamName}.lock 삭제</span>
-
-<span class="comment">// SyncResult 반환:</span>
-<span class="comment">//  created: N, updated: N, archived: N, skipped: N, errors: N</span></code></pre>
+          <pre><code><span class="keyword">await</span> <span class="func">saveSyncState</span>(state, teamName)  <span class="comment">// → .ccteams-sync.{teamName}.json</span>
+<span class="keyword">await</span> <span class="func">releaseLock</span>(lockPath)            <span class="comment">// → .lock 파일 삭제</span></code></pre>
+          <p>최종 반환되는 <code>SyncResult</code>:</p>
+          <pre><code>{ created: N, updated: N, archived: N, skipped: N, errors: N }</code></pre>
         </div>
       </div>
     </div>
@@ -1431,32 +1398,17 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
     <p>ccteams의 가장 강력한 통합 포인트는 <strong>Claude Code Hooks</strong>입니다. 이를 통해 에이전트가 태스크를 생성하거나 수정할 때 자동으로 동기화가 실행됩니다.</p>
 
     <h3>동작 원리</h3>
-    <div class="diagram">
-    에이전트 팀원이 태스크 상태 변경
-              │
-              ▼
-    ┌──────────────────────────┐
-    │  TaskCreate / TaskUpdate │  ← Claude Code 내부 도구
-    └─────────────┬────────────┘
-                  │
-                  ▼
-    ┌──────────────────────────┐
-    │  <span class="highlight">PostToolUse Hook 트리거</span>   │  ← Claude Code Hooks 시스템
-    │                          │
-    │  matcher: "TaskCreate    │
-    │          |TaskUpdate"    │
-    └─────────────┬────────────┘
-                  │
-                  ▼
-    ┌──────────────────────────┐
-    │  ccteams sync --quiet    │  ← 비동기 실행 (async: true)
-    │                          │
-    │  1. Lock 획득            │
-    │  2. 태스크 읽기          │
-    │  3. 변경분 감지          │
-    │  4. GitHub 동기화        │
-    │  5. Lock 해제            │
-    └──────────────────────────┘</div>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+flowchart TD
+    A["🤖 에이전트 팀원이\n태스크 상태 변경"]
+    B["TaskCreate / TaskUpdate\n(Claude Code 내부 도구)"]
+    C["⚡ PostToolUse Hook 트리거\n\nmatcher: TaskCreate|TaskUpdate\n(Claude Code Hooks 시스템)"]
+    D["ccteams sync --quiet\n(비동기 실행, async: true)\n\n1. Lock 획득\n2. 태스크 읽기\n3. 변경분 감지\n4. GitHub 동기화\n5. Lock 해제"]
+
+    A --> B --> C --> D
+      </pre>
+    </div>
 
     <h3>Hook 설정 파일</h3>
     <p><code>ccteams hooks install</code> 실행 시 <code>~/.claude/settings.json</code>에 추가되는 내용:</p>
@@ -1576,21 +1528,23 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
     <h3>GitHub API 통신</h3>
     <p>ccteams는 <code>gh</code> CLI를 통해 GitHub GraphQL/REST API를 호출합니다. SDK를 사용하지 않고 직접 자식 프로세스를 스폰합니다.</p>
 
-    <pre><code><span class="comment">// src/utils/gh-auth.ts</span>
-
-<span class="comment">// GraphQL 호출</span>
-<span class="func">runGraphQL</span>(query, variables) {
-  <span class="comment">// gh api graphql --input - 프로세스 스폰</span>
-  <span class="comment">// stdin으로 { query, variables } JSON 전달</span>
-  <span class="comment">// stdout에서 응답 파싱</span>
-  <span class="comment">// GraphQL errors 필드 체크</span>
-}
-
-<span class="comment">// REST 호출</span>
-<span class="func">runREST</span>(endpoint, method, body) {
-  <span class="comment">// gh api {endpoint} -X {method} --input -</span>
-  <span class="comment">// 브랜치 링크 등 REST-only 작업에 사용</span>
-}</code></pre>
+    <p><code>src/utils/gh-auth.ts</code>에서 두 가지 방식으로 GitHub API를 호출합니다:</p>
+    <table>
+      <thead><tr><th>함수</th><th>실행 명령</th><th>용도</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>runGraphQL(query, variables)</code></td>
+          <td><code>gh api graphql --input -</code></td>
+          <td>Project 생성, Issue 관리, 필드 설정 등 대부분의 작업</td>
+        </tr>
+        <tr>
+          <td><code>runREST(endpoint, method, body)</code></td>
+          <td><code>gh api {endpoint} -X {method}</code></td>
+          <td>브랜치 링크 등 REST-only 작업</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>두 함수 모두 <code>gh</code> CLI를 자식 프로세스로 스폰하여 stdin/stdout으로 JSON을 주고받습니다. SDK를 사용하지 않고 <code>gh</code>의 내장 인증을 활용합니다.</p>
 
     <h3>라벨 시스템</h3>
     <p>각 팀에 대해 <code>ccteams:{teamName}</code> 라벨이 자동 생성됩니다.</p>
@@ -1624,27 +1578,21 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
 }</code></pre>
 
     <h3>비교 흐름</h3>
-    <div class="diagram">
-    태스크 파일 읽기
-         │
-         ▼
-    computeTaskHash(task) → <span class="highlight">currentHash</span>
-         │
-         ▼
-    sync state에서 매핑 조회
-    findMapping(state, taskId) → <span class="highlight">mapping.lastHash</span>
-         │
-         ▼
-    ┌────────────────────────┐
-    │ currentHash === lastHash? │
-    └───────┬──────┬─────────┘
-        YES │      │ NO
-            │      │
-            ▼      ▼
-      [<span class="highlight">SKIP</span>]   [<span class="highlight">UPDATE</span>]
-      API 호출   Issue 제목/본문 업데이트
-      없음       커스텀 필드 재설정
-               lastHash 갱신</div>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+flowchart TD
+    Read["📁 태스크 파일 읽기"]
+    Hash["computeTaskHash(task)\n→ currentHash (SHA-256)"]
+    Lookup["sync state에서 매핑 조회\nfindMapping(state, taskId)\n→ mapping.lastHash"]
+    Compare{"currentHash\n===\nlastHash?"}
+    Skip["✅ SKIP\nAPI 호출 없음"]
+    Update["🔄 UPDATE\nIssue 제목/본문 업데이트\n커스텀 필드 재설정\nlastHash 갱신"]
+
+    Read --> Hash --> Lookup --> Compare
+    Compare -->|YES| Skip
+    Compare -->|NO| Update
+      </pre>
+    </div>
 
     <div class="info-box tip">
       <strong>성능 이점</strong>
@@ -1665,31 +1613,49 @@ fs.writeFile(lockPath, JSON.stringify({ pid, timestamp }), { flag: <span class="
     </ul>
 
     <h3>위상 정렬 알고리즘</h3>
-    <pre><code><span class="comment">// src/core/sync-engine.ts - sortByDependency()</span>
+    <p><code>src/core/sync-engine.ts</code>의 <code>sortByDependency()</code>:</p>
+    <table>
+      <thead><tr><th>입력</th><th>출력</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>[{task: A, blockedBy: []}, {task: B, blockedBy: ["A"]}, ...]</code></td>
+          <td><code>[[A, C], [B, D], [E]]</code> (레벨별 그룹)</td>
+        </tr>
+      </tbody>
+    </table>
+    <ul>
+      <li><strong>Level 0</strong>: 의존성이 없는 태스크 (루트)</li>
+      <li><strong>Level 1</strong>: Level 0에만 의존하는 태스크</li>
+      <li><strong>Level N</strong>: Level 0~(N-1)에 의존하는 태스크</li>
+    </ul>
+    <p>같은 레벨 내에서는 <strong>병렬 생성</strong> 가능 (concurrency=5), 다른 레벨 간에는 <strong>순차 생성</strong> (parentIssueId가 필요하므로)</p>
 
-<span class="comment">// 입력: [{task: A, blockedBy: []}, {task: B, blockedBy: ["A"]}, ...]</span>
-<span class="comment">// 출력: [[A, C], [B, D], [E]]  (레벨별 그룹)</span>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+flowchart LR
+    subgraph Claude["Claude Code Tasks"]
+        direction TB
+        TA["Task A\n(no deps)"]
+        TB["Task B\n(blockedBy: [A])"]
+        TC["Task C\n(blockedBy: [B])"]
+        TA -->|blockedBy| TB
+        TB -->|blockedBy| TC
+    end
 
-<span class="comment">// Level 0: 의존성이 없는 태스크 (루트)</span>
-<span class="comment">// Level 1: Level 0에만 의존하는 태스크</span>
-<span class="comment">// Level N: Level 0~(N-1)에 의존하는 태스크</span>
+    subgraph GitHub["GitHub Issues"]
+        direction TB
+        I1["Issue #1\n(root)"]
+        I2["Issue #2\n(child of #1)"]
+        I3["Issue #3\n(child of #2)"]
+        I1 -->|parent| I2
+        I2 -->|parent| I3
+    end
 
-<span class="comment">// 같은 레벨 내에서는 병렬 생성 가능 (concurrency=5)</span>
-<span class="comment">// 다른 레벨 간에는 순차 생성 (parentIssueId 필요)</span></code></pre>
-
-    <div class="diagram">
-    Claude Code Tasks                    GitHub Issues
-    ──────────────────                   ──────────────────
-
-    Task A (no deps)         ─────►     Issue #1 (root)
-         │                                    │
-         │ blockedBy                          │ parent
-         ▼                                    ▼
-    Task B (blockedBy: [A])  ─────►     Issue #2 (child of #1)
-         │                                    │
-         │ blockedBy                          │ parent
-         ▼                                    ▼
-    Task C (blockedBy: [B])  ─────►     Issue #3 (child of #2)</div>
+    TA -.->|sync| I1
+    TB -.->|sync| I2
+    TC -.->|sync| I3
+      </pre>
+    </div>
   </section>
 
   <!-- 2.8 Auto Commit -->
@@ -1716,24 +1682,19 @@ Tasks:
 - [ ] 테스트 작성 (pending)</code></pre>
 
     <h3>브랜치 링크 흐름</h3>
-    <div class="diagram">
-    에이전트 작업 디렉터리 (cwd)
-         │
-         ▼
-    ┌──────────────────────────┐
-    │  1. 미커밋 변경사항 감지   │
-    │  2. auto-commit 생성     │
-    │  3. HEAD SHA 확인        │
-    └─────────────┬────────────┘
-                  │
-                  ▼
-    ┌──────────────────────────────────┐
-    │  4. GitHub에 브랜치 ref 생성      │
-    │     ccteams/{team}/{member}       │
-    │                                  │
-    │  5. Issue에 브랜치 링크           │
-    │     → Development 패널에 표시     │
-    └──────────────────────────────────┘</div>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+flowchart TD
+    CWD["📂 에이전트 작업 디렉터리 (cwd)"]
+    Detect["1. 미커밋 변경사항 감지\ngit status"]
+    Commit["2. auto-commit 생성\n[ccteams] agent@team: task-subject"]
+    SHA["3. HEAD SHA 확인\ngit rev-parse HEAD"]
+    Branch["4. GitHub에 브랜치 ref 생성\nccteams/{team}/{member}"]
+    Link["5. Issue에 브랜치 링크\n→ Development 패널에 표시"]
+
+    CWD --> Detect --> Commit --> SHA --> Branch --> Link
+      </pre>
+    </div>
 
     <div class="info-box note">
       <strong>브랜치 링크의 원자적 처리</strong>
@@ -1748,20 +1709,39 @@ Tasks:
     <h3>분산 락 메커니즘</h3>
     <p>여러 Hook이나 Watch가 동시에 sync를 트리거할 수 있으므로, 파일 기반 락으로 경합을 방지합니다.</p>
 
-    <pre><code><span class="comment">// src/utils/lock.ts</span>
+    <p><code>src/utils/lock.ts</code> &mdash; 락 파일: <code>.ccteams-sync.{teamName}.lock</code></p>
+    <p>전략: Exclusive file creation (<code>flag: 'wx'</code>)</p>
 
-<span class="comment">// 락 파일: .ccteams-sync.{teamName}.lock</span>
-<span class="comment">// 전략: Exclusive file creation (flag: 'wx')</span>
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+sequenceDiagram
+    participant A as 에이전트 A
+    participant Lock as Lock 파일
+    participant B as 에이전트 B
 
-<span class="comment">// 시나리오:</span>
-<span class="comment">// 1. 에이전트 A가 TaskUpdate → Hook 트리거 → sync 시작 → 락 획득</span>
-<span class="comment">// 2. 에이전트 B가 TaskUpdate → Hook 트리거 → sync 시도</span>
-<span class="comment">//    → 락 존재 → 1초 간격으로 폴링 (최대 30초)</span>
-<span class="comment">// 3. 에이전트 A의 sync 완료 → 락 해제</span>
-<span class="comment">// 4. 에이전트 B가 락 획득 → sync 실행</span>
+    A->>Lock: TaskUpdate → Hook → sync 시작
+    Note over Lock: 락 획득 성공 (wx)
 
-<span class="comment">// Stale 락 감지: 2분 이상 된 락은 자동 삭제</span>
-<span class="comment">// (프로세스 크래시 등으로 락이 남은 경우)</span></code></pre>
+    B->>Lock: TaskUpdate → Hook → sync 시도
+    Note over Lock: 락 존재 → EEXIST
+    loop 1초 간격 폴링 (최대 30초)
+        B->>Lock: 락 확인
+        Lock-->>B: 아직 잠겨있음
+    end
+
+    A->>Lock: sync 완료 → 락 해제
+    Note over Lock: .lock 파일 삭제
+
+    B->>Lock: 락 획득 성공
+    Note over B: sync 실행
+    B->>Lock: sync 완료 → 락 해제
+      </pre>
+    </div>
+
+    <div class="info-box note">
+      <strong>Stale 락 감지</strong>
+      <p>프로세스 크래시 등으로 남은 락은 <strong>2분 이상</strong> 경과 시 자동 삭제됩니다.</p>
+    </div>
 
     <h3>병렬 처리 전략</h3>
     <table>
@@ -1798,17 +1778,17 @@ Tasks:
     </table>
 
     <h3>재시도 전략</h3>
-    <pre><code><span class="comment">// src/utils/retry.ts - withRetry()</span>
-
-<span class="comment">// 지수 백오프:</span>
-<span class="comment">// 1차 재시도: 1초 대기</span>
-<span class="comment">// 2차 재시도: 2초 대기</span>
-<span class="comment">// 3차 재시도: 4초 대기</span>
-<span class="comment">// 4차: 포기 → 에러 throw</span>
-
-<span class="comment">// 공식: delay = BASE_RETRY_DELAY_MS × 2^attempt</span>
-<span class="comment">// BASE_RETRY_DELAY_MS = 1000ms</span>
-<span class="comment">// MAX_RETRIES = 3</span></code></pre>
+    <p><code>src/utils/retry.ts</code>의 <code>withRetry()</code> &mdash; 지수 백오프 전략:</p>
+    <table>
+      <thead><tr><th>시도</th><th>대기 시간</th><th>공식</th></tr></thead>
+      <tbody>
+        <tr><td>1차 재시도</td><td>1초</td><td>1000ms &times; 2<sup>0</sup></td></tr>
+        <tr><td>2차 재시도</td><td>2초</td><td>1000ms &times; 2<sup>1</sup></td></tr>
+        <tr><td>3차 재시도</td><td>4초</td><td>1000ms &times; 2<sup>2</sup></td></tr>
+        <tr><td>4차</td><td colspan="2">포기 &rarr; 에러 throw</td></tr>
+      </tbody>
+    </table>
+    <p><code>BASE_RETRY_DELAY_MS = 1000</code>, <code>MAX_RETRIES = 3</code></p>
   </section>
 
   <!-- Final section: Full E2E Example -->
@@ -1924,5 +1904,42 @@ Tasks:
 
 </div>
 
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#58a6ff',
+      lineColor: '#8b949e',
+      secondaryColor: '#21262d',
+      tertiaryColor: '#161b22',
+      fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Noto Sans, Helvetica, Arial, sans-serif',
+      fontSize: '14px',
+      nodeBorder: '#30363d',
+      mainBkg: '#161b22',
+      clusterBkg: '#0d111722',
+      clusterBorder: '#30363d',
+      titleColor: '#e6edf3',
+      edgeLabelBackground: '#161b22',
+      nodeTextColor: '#e6edf3',
+      actorTextColor: '#e6edf3',
+      actorBkg: '#161b22',
+      actorBorder: '#58a6ff',
+      signalColor: '#8b949e',
+      noteBkgColor: '#1f6feb33',
+      noteTextColor: '#e6edf3',
+      noteBorderColor: '#58a6ff',
+      activationBkgColor: '#21262d',
+      activationBorderColor: '#58a6ff',
+      sequenceNumberColor: '#e6edf3',
+      stateBkg: '#161b22',
+      stateBorder: '#58a6ff',
+      labelColor: '#e6edf3'
+    }
+  });
+</script>
 </body>
 </html>
