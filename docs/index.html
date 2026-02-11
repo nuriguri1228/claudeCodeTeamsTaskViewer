@@ -922,12 +922,234 @@ flowchart TD
       <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>
     },
     {
+      <span class="string">"name"</span>: <span class="string">"frontend-dev"</span>,
+      <span class="string">"agentId"</span>: <span class="string">"jkl-012"</span>,
+      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
+      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>
+    },
+    {
       <span class="string">"name"</span>: <span class="string">"tester"</span>,
       <span class="string">"agentId"</span>: <span class="string">"ghi-789"</span>,
       <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>
     }
   ]
 }</code></pre>
+
+    <h3><code>cwd</code>란 무엇인가?</h3>
+    <p><code>cwd</code>(<strong>Current Working Directory</strong>)는 각 에이전트가 실제로 파일을 읽고, 쓰고, git 명령을 실행하는 <strong>작업 디렉터리 경로</strong>입니다.</p>
+
+    <table>
+      <thead>
+        <tr><th>속성</th><th>설명</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>위치</td>
+          <td><code>config.json</code>의 <code>members[].cwd</code></td>
+        </tr>
+        <tr>
+          <td>설정 시점</td>
+          <td>리더가 <code>Task</code> 도구로 팀원을 스폰할 때 자동 기록</td>
+        </tr>
+        <tr>
+          <td>미설정 시</td>
+          <td>리더의 프로젝트 루트를 상속</td>
+        </tr>
+        <tr>
+          <td>역할</td>
+          <td>ccteams가 에이전트별 git 브랜치, HEAD SHA 수집 및 auto-commit 수행 시 이 경로에서 실행</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>같은 <code>cwd</code>에서 작업 시 충돌 시나리오</h3>
+    <p>위 config 예시에서 <code>backend-dev</code>와 <code>frontend-dev</code>가 동일한 <code>/home/user/project</code> 디렉터리를 <code>cwd</code>로 사용합니다. 이 경우 다음과 같은 충돌이 발생합니다.</p>
+
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+sequenceDiagram
+    participant B as backend-dev<br/>cwd: /home/user/project
+    participant FS as 파일 시스템<br/>/home/user/project
+    participant F as frontend-dev<br/>cwd: /home/user/project
+
+    B->>FS: src/app.ts 수정 (라우터 추가)
+    F->>FS: src/app.ts 수정 (미들웨어 추가)
+    Note over FS: 마지막 write가 이전 변경을 덮어씀!
+
+    B->>FS: git add . && git commit
+    Note over B,F: frontend-dev의 변경사항이<br/>backend-dev의 커밋에 섞임
+
+    F->>FS: git add . && git commit
+    Note over F: "nothing to commit"<br/>이미 backend-dev가 커밋함
+      </pre>
+    </div>
+
+    <div class="info-box warning">
+      <strong>같은 cwd = 같은 파일 시스템 + 같은 .git</strong>
+      <p>두 에이전트가 동일한 디렉터리에서 작업하면:</p>
+      <ul>
+        <li><strong>파일 덮어쓰기</strong> &mdash; 한 에이전트가 저장한 파일을 다른 에이전트가 즉시 덮어씀</li>
+        <li><strong>git 상태 오염</strong> &mdash; <code>git status</code>, <code>git diff</code> 결과에 다른 에이전트의 변경사항이 섞임</li>
+        <li><strong>커밋 오염</strong> &mdash; <code>git add .</code> 시 다른 에이전트의 파일까지 스테이징됨</li>
+        <li><strong>브랜치 충돌</strong> &mdash; 두 에이전트가 같은 브랜치의 HEAD를 동시에 변경</li>
+      </ul>
+    </div>
+
+    <h3>해결책: Git Worktree로 에이전트 격리</h3>
+    <p><code>git worktree</code>는 <strong>하나의 Git 저장소에서 여러 작업 디렉터리를 만드는</strong> Git 내장 기능입니다. 각 worktree는 독립된 브랜치를 체크아웃하며, 파일 시스템이 완전히 분리됩니다.</p>
+
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+flowchart TD
+    subgraph REPO["하나의 Git 저장소 (.git)"]
+        ODB["Object Database<br/>모든 커밋, 블롭 공유"]
+    end
+
+    subgraph WT_MAIN["메인 워크트리"]
+        DIR_MAIN["/home/user/project<br/>branch: main"]
+        LEAD["team-lead"]
+    end
+
+    subgraph WT_BACK["worktree: backend"]
+        DIR_BACK["/home/user/project-wt-backend<br/>branch: feat/auth-backend"]
+        BACK["backend-dev"]
+    end
+
+    subgraph WT_FRONT["worktree: frontend"]
+        DIR_FRONT["/home/user/project-wt-frontend<br/>branch: feat/auth-frontend"]
+        FRONT["frontend-dev"]
+    end
+
+    REPO --- WT_MAIN
+    REPO --- WT_BACK
+    REPO --- WT_FRONT
+      </pre>
+    </div>
+
+    <h4>Worktree 핵심 개념</h4>
+    <table>
+      <thead>
+        <tr><th>구분</th><th>git clone (별도 복사)</th><th>git worktree (공유)</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>저장소</td>
+          <td>완전히 별개의 <code>.git</code></td>
+          <td><strong>하나의 <code>.git</code></strong>을 공유</td>
+        </tr>
+        <tr>
+          <td>디스크 사용량</td>
+          <td>전체 히스토리 복제 (수백 MB~GB)</td>
+          <td><strong>워킹 디렉터리만 추가</strong> (수 MB)</td>
+        </tr>
+        <tr>
+          <td>브랜치 공유</td>
+          <td><code>git fetch</code>로 동기화 필요</td>
+          <td><strong>즉시 공유</strong> (같은 refs)</td>
+        </tr>
+        <tr>
+          <td>같은 브랜치 체크아웃</td>
+          <td>가능 (독립 저장소)</td>
+          <td><strong>불가</strong> (한 브랜치 = 한 worktree)</td>
+        </tr>
+        <tr>
+          <td>파일 격리</td>
+          <td>완전 격리</td>
+          <td><strong>완전 격리</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h4>실전 예제: Worktree로 에이전트 격리하기</h4>
+    <pre><code><span class="comment"># 1. 메인 프로젝트에서 에이전트별 worktree 생성</span>
+<span class="keyword">cd</span> /home/user/project
+
+<span class="comment"># backend-dev 전용 worktree (새 브랜치 생성)</span>
+<span class="func">git worktree add</span> ../project-wt-backend -b feat/auth-backend
+
+<span class="comment"># frontend-dev 전용 worktree (새 브랜치 생성)</span>
+<span class="func">git worktree add</span> ../project-wt-frontend -b feat/auth-frontend
+
+<span class="comment"># 2. worktree 목록 확인</span>
+<span class="func">git worktree list</span>
+<span class="comment"># /home/user/project              abc1234 [main]</span>
+<span class="comment"># /home/user/project-wt-backend   abc1234 [feat/auth-backend]</span>
+<span class="comment"># /home/user/project-wt-frontend  abc1234 [feat/auth-frontend]</span></code></pre>
+
+    <p>Worktree를 만든 후 config.json에서 각 에이전트의 <code>cwd</code>를 분리하면 충돌이 해소됩니다.</p>
+
+    <h4>격리된 config.json</h4>
+    <pre><code>{
+  <span class="string">"team_name"</span>: <span class="string">"auth-api"</span>,
+  <span class="string">"members"</span>: [
+    {
+      <span class="string">"name"</span>: <span class="string">"team-lead"</span>,
+      <span class="string">"agentId"</span>: <span class="string">"abc-123"</span>,
+      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
+      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>                  <span class="comment">← main 브랜치</span>
+    },
+    {
+      <span class="string">"name"</span>: <span class="string">"backend-dev"</span>,
+      <span class="string">"agentId"</span>: <span class="string">"def-456"</span>,
+      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
+      <span class="string">"cwd"</span>: <span class="string">"/home/user/project-wt-backend"</span>       <span class="comment">← feat/auth-backend 브랜치</span>
+    },
+    {
+      <span class="string">"name"</span>: <span class="string">"frontend-dev"</span>,
+      <span class="string">"agentId"</span>: <span class="string">"jkl-012"</span>,
+      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
+      <span class="string">"cwd"</span>: <span class="string">"/home/user/project-wt-frontend"</span>      <span class="comment">← feat/auth-frontend 브랜치</span>
+    },
+    {
+      <span class="string">"name"</span>: <span class="string">"tester"</span>,
+      <span class="string">"agentId"</span>: <span class="string">"ghi-789"</span>,
+      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
+      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>                  <span class="comment">← main (읽기 전용 테스트)</span>
+    }
+  ]
+}</code></pre>
+
+    <div class="mermaid-wrapper">
+      <pre class="mermaid">
+sequenceDiagram
+    participant B as backend-dev<br/>cwd: project-wt-backend<br/>branch: feat/auth-backend
+    participant GIT as Git Object DB<br/>(공유)
+    participant F as frontend-dev<br/>cwd: project-wt-frontend<br/>branch: feat/auth-frontend
+
+    B->>B: src/routes/auth.ts 수정
+    F->>F: src/components/Login.tsx 수정
+    Note over B,F: 파일 시스템이 분리되어<br/>서로 영향 없음
+
+    B->>GIT: git commit (feat/auth-backend)
+    F->>GIT: git commit (feat/auth-frontend)
+    Note over GIT: 각자의 브랜치에 독립 커밋<br/>Object DB만 공유
+
+    B-->>GIT: ccteams auto-commit & push
+    F-->>GIT: ccteams auto-commit & push
+    Note over B,F: ccteams가 각 cwd에서<br/>브랜치 정보를 정확히 수집
+      </pre>
+    </div>
+
+    <div class="info-box note">
+      <strong>ccteams와 Worktree의 연결</strong>
+      <p>ccteams의 <code>getAgentGitInfo()</code>는 각 멤버의 <code>cwd</code> 경로에서 <code>git rev-parse</code>를 실행합니다. Worktree는 자체 <code>.git</code> 파일(메인 저장소를 가리키는 포인터)을 가지므로, <code>cwd</code>가 worktree 경로를 가리키면 해당 worktree의 브랜치와 커밋 SHA가 자연스럽게 수집됩니다.</p>
+    </div>
+
+    <h4>Worktree 정리</h4>
+    <pre><code><span class="comment"># 작업 완료 후 worktree 제거</span>
+<span class="keyword">cd</span> /home/user/project
+
+<span class="comment"># 브랜치를 main에 머지한 후</span>
+<span class="func">git merge</span> feat/auth-backend
+<span class="func">git merge</span> feat/auth-frontend
+
+<span class="comment"># worktree 제거</span>
+<span class="func">git worktree remove</span> ../project-wt-backend
+<span class="func">git worktree remove</span> ../project-wt-frontend
+
+<span class="comment"># 확인</span>
+<span class="func">git worktree list</span>
+<span class="comment"># /home/user/project  def5678 [main]   ← 메인만 남음</span></code></pre>
 
     <h4>태스크 목록: <code>~/.claude/tasks/{team-name}/*.json</code></h4>
     <pre><code>{
