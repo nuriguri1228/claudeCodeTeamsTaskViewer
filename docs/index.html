@@ -922,21 +922,16 @@ flowchart TD
       <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>
     },
     {
-      <span class="string">"name"</span>: <span class="string">"frontend-dev"</span>,
-      <span class="string">"agentId"</span>: <span class="string">"jkl-012"</span>,
-      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
-      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>
-    },
-    {
       <span class="string">"name"</span>: <span class="string">"tester"</span>,
       <span class="string">"agentId"</span>: <span class="string">"ghi-789"</span>,
-      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>
+      <span class="string">"agentType"</span>: <span class="string">"general-purpose"</span>,
+      <span class="string">"cwd"</span>: <span class="string">"/home/user/project"</span>
     }
   ]
 }</code></pre>
 
     <h3><code>cwd</code>란 무엇인가?</h3>
-    <p><code>cwd</code>(<strong>Current Working Directory</strong>)는 각 에이전트가 실제로 파일을 읽고, 쓰고, git 명령을 실행하는 <strong>작업 디렉터리 경로</strong>입니다.</p>
+    <p><code>cwd</code>(<strong>Current Working Directory</strong>)는 각 에이전트가 실제로 파일을 읽고, 쓰고, Bash 명령을 실행하는 <strong>작업 디렉터리 경로</strong>입니다. Claude Code Agent Teams에서 모든 에이전트의 활동 범위를 결정하는 핵심 속성입니다.</p>
 
     <table>
       <thead>
@@ -949,21 +944,30 @@ flowchart TD
         </tr>
         <tr>
           <td>설정 시점</td>
-          <td>리더가 <code>Task</code> 도구로 팀원을 스폰할 때 자동 기록</td>
+          <td>리더가 <code>Task</code> 도구로 팀원을 스폰할 때 자동 기록됨</td>
         </tr>
         <tr>
-          <td>미설정 시</td>
-          <td>리더의 프로젝트 루트를 상속</td>
+          <td>기본값</td>
+          <td><strong>리더의 프로젝트 루트와 동일한 경로</strong> &mdash; 별도 설정하지 않으면 모든 팀원이 리더와 같은 디렉터리에서 작업</td>
         </tr>
         <tr>
-          <td>역할</td>
-          <td>ccteams가 에이전트별 git 브랜치, HEAD SHA 수집 및 auto-commit 수행 시 이 경로에서 실행</td>
+          <td>영향 범위</td>
+          <td>에이전트의 Read/Write/Edit 도구의 기준 경로, Bash 도구의 실행 위치, git 명령의 대상 저장소</td>
         </tr>
       </tbody>
     </table>
 
-    <h3>같은 <code>cwd</code>에서 작업 시 충돌 시나리오</h3>
-    <p>위 config 예시에서 <code>backend-dev</code>와 <code>frontend-dev</code>가 동일한 <code>/home/user/project</code> 디렉터리를 <code>cwd</code>로 사용합니다. 이 경우 다음과 같은 충돌이 발생합니다.</p>
+    <div class="info-box note">
+      <strong>기본 동작: 모든 에이전트가 같은 cwd를 공유</strong>
+      <p>Claude Code Agent Teams는 팀원을 스폰할 때 <strong>리더가 실행 중인 프로젝트 디렉터리를 그대로 상속</strong>합니다. 즉, 별도 설정 없이는 모든 에이전트가 동일한 파일 시스템과 동일한 <code>.git</code> 저장소를 공유합니다. 이것은 의도된 기본 동작이지만, 여러 에이전트가 동시에 같은 파일을 수정하는 경우 충돌의 원인이 됩니다.</p>
+    </div>
+
+    <h3>같은 <code>cwd</code> 충돌 시나리오</h3>
+    <p>아래는 리더가 <code>frontend-dev</code>를 추가 스폰하여 총 4명이 된 팀에서, <code>backend-dev</code>와 <code>frontend-dev</code>가 <strong>기본 동작 그대로 같은 디렉터리</strong>에서 동시에 작업하는 상황입니다.</p>
+
+    <pre><code><span class="comment">// 리더가 팀원을 스폰 — 별도 cwd 설정 없음 → 모두 /home/user/project</span>
+Task({ name: <span class="string">"backend-dev"</span>,  team_name: <span class="string">"auth-api"</span>, prompt: <span class="string">"JWT 인증 구현"</span>, ... })
+Task({ name: <span class="string">"frontend-dev"</span>, team_name: <span class="string">"auth-api"</span>, prompt: <span class="string">"로그인 UI 구현"</span>, ... })</code></pre>
 
     <div class="mermaid-wrapper">
       <pre class="mermaid">
@@ -972,31 +976,32 @@ sequenceDiagram
     participant FS as 파일 시스템<br/>/home/user/project
     participant F as frontend-dev<br/>cwd: /home/user/project
 
-    B->>FS: src/app.ts 수정 (라우터 추가)
-    F->>FS: src/app.ts 수정 (미들웨어 추가)
-    Note over FS: 마지막 write가 이전 변경을 덮어씀!
+    B->>FS: Edit src/app.ts (라우터 추가)
+    F->>FS: Edit src/app.ts (미들웨어 추가)
+    Note over FS: 마지막 Write가 이전 변경을 덮어씀!
 
-    B->>FS: git add . && git commit
+    B->>FS: Bash: git add . && git commit
     Note over B,F: frontend-dev의 변경사항이<br/>backend-dev의 커밋에 섞임
 
-    F->>FS: git add . && git commit
+    F->>FS: Bash: git add . && git commit
     Note over F: "nothing to commit"<br/>이미 backend-dev가 커밋함
       </pre>
     </div>
 
     <div class="info-box warning">
       <strong>같은 cwd = 같은 파일 시스템 + 같은 .git</strong>
-      <p>두 에이전트가 동일한 디렉터리에서 작업하면:</p>
+      <p>두 에이전트가 동일한 디렉터리에서 동시에 작업하면:</p>
       <ul>
-        <li><strong>파일 덮어쓰기</strong> &mdash; 한 에이전트가 저장한 파일을 다른 에이전트가 즉시 덮어씀</li>
+        <li><strong>파일 덮어쓰기</strong> &mdash; 한 에이전트가 Edit/Write한 파일을 다른 에이전트가 즉시 덮어씀</li>
         <li><strong>git 상태 오염</strong> &mdash; <code>git status</code>, <code>git diff</code> 결과에 다른 에이전트의 변경사항이 섞임</li>
         <li><strong>커밋 오염</strong> &mdash; <code>git add .</code> 시 다른 에이전트의 파일까지 스테이징됨</li>
         <li><strong>브랜치 충돌</strong> &mdash; 두 에이전트가 같은 브랜치의 HEAD를 동시에 변경</li>
       </ul>
+      <p>Claude Code는 에이전트 간 파일 수준의 락을 제공하지 않으므로, <strong>이 충돌 방지는 사용자의 책임</strong>입니다.</p>
     </div>
 
     <h3>해결책: Git Worktree로 에이전트 격리</h3>
-    <p><code>git worktree</code>는 <strong>하나의 Git 저장소에서 여러 작업 디렉터리를 만드는</strong> Git 내장 기능입니다. 각 worktree는 독립된 브랜치를 체크아웃하며, 파일 시스템이 완전히 분리됩니다.</p>
+    <p><code>git worktree</code>는 <strong>하나의 Git 저장소에서 여러 작업 디렉터리를 만드는</strong> Git 내장 기능입니다. 각 worktree는 독립된 브랜치를 체크아웃하며, 파일 시스템이 완전히 분리됩니다. 팀원을 스폰하기 전에 worktree를 만들어 두면, 각 에이전트를 서로 다른 <code>cwd</code>에서 격리하여 실행할 수 있습니다.</p>
 
     <div class="mermaid-wrapper">
       <pre class="mermaid">
@@ -1061,13 +1066,14 @@ flowchart TD
     </table>
 
     <h4>실전 예제: Worktree로 에이전트 격리하기</h4>
+    <p>팀을 만들기 전에, 사용자가 터미널에서 worktree를 준비합니다.</p>
     <pre><code><span class="comment"># 1. 메인 프로젝트에서 에이전트별 worktree 생성</span>
 <span class="keyword">cd</span> /home/user/project
 
-<span class="comment"># backend-dev 전용 worktree (새 브랜치 생성)</span>
+<span class="comment"># backend-dev 전용 worktree (새 브랜치 자동 생성)</span>
 <span class="func">git worktree add</span> ../project-wt-backend -b feat/auth-backend
 
-<span class="comment"># frontend-dev 전용 worktree (새 브랜치 생성)</span>
+<span class="comment"># frontend-dev 전용 worktree (새 브랜치 자동 생성)</span>
 <span class="func">git worktree add</span> ../project-wt-frontend -b feat/auth-frontend
 
 <span class="comment"># 2. worktree 목록 확인</span>
@@ -1076,7 +1082,7 @@ flowchart TD
 <span class="comment"># /home/user/project-wt-backend   abc1234 [feat/auth-backend]</span>
 <span class="comment"># /home/user/project-wt-frontend  abc1234 [feat/auth-frontend]</span></code></pre>
 
-    <p>Worktree를 만든 후 config.json에서 각 에이전트의 <code>cwd</code>를 분리하면 충돌이 해소됩니다.</p>
+    <p>그런 다음, 리더에게 <strong>"각 에이전트를 worktree 경로에서 실행해줘"</strong>라고 지시하면 리더가 스폰 시 해당 경로를 cwd로 사용합니다. config.json은 다음과 같이 기록됩니다.</p>
 
     <h4>격리된 config.json</h4>
     <pre><code>{
@@ -1116,34 +1122,34 @@ sequenceDiagram
     participant GIT as Git Object DB<br/>(공유)
     participant F as frontend-dev<br/>cwd: project-wt-frontend<br/>branch: feat/auth-frontend
 
-    B->>B: src/routes/auth.ts 수정
-    F->>F: src/components/Login.tsx 수정
+    B->>B: Edit src/routes/auth.ts
+    F->>F: Edit src/components/Login.tsx
     Note over B,F: 파일 시스템이 분리되어<br/>서로 영향 없음
 
-    B->>GIT: git commit (feat/auth-backend)
-    F->>GIT: git commit (feat/auth-frontend)
+    B->>GIT: Bash: git commit (feat/auth-backend)
+    F->>GIT: Bash: git commit (feat/auth-frontend)
     Note over GIT: 각자의 브랜치에 독립 커밋<br/>Object DB만 공유
 
-    B-->>GIT: ccteams auto-commit & push
-    F-->>GIT: ccteams auto-commit & push
-    Note over B,F: ccteams가 각 cwd에서<br/>브랜치 정보를 정확히 수집
+    B->>GIT: Bash: git push origin feat/auth-backend
+    F->>GIT: Bash: git push origin feat/auth-frontend
+    Note over B,F: 각 에이전트가 자신의 cwd에서<br/>독립적으로 push
       </pre>
     </div>
 
     <div class="info-box note">
-      <strong>ccteams와 Worktree의 연결</strong>
-      <p>ccteams의 <code>getAgentGitInfo()</code>는 각 멤버의 <code>cwd</code> 경로에서 <code>git rev-parse</code>를 실행합니다. Worktree는 자체 <code>.git</code> 파일(메인 저장소를 가리키는 포인터)을 가지므로, <code>cwd</code>가 worktree 경로를 가리키면 해당 worktree의 브랜치와 커밋 SHA가 자연스럽게 수집됩니다.</p>
+      <strong>Worktree의 내부 구조</strong>
+      <p>Worktree 디렉터리에는 <code>.git</code> <strong>파일</strong>(디렉터리가 아님)이 생성되며, 메인 저장소의 <code>.git/worktrees/{name}</code>을 가리키는 포인터 역할을 합니다. 따라서 각 에이전트가 자신의 <code>cwd</code>에서 <code>git</code> 명령을 실행하면 해당 worktree의 브랜치와 인덱스가 사용되어, 다른 에이전트의 작업에 전혀 영향을 주지 않습니다.</p>
     </div>
 
     <h4>Worktree 정리</h4>
     <pre><code><span class="comment"># 작업 완료 후 worktree 제거</span>
 <span class="keyword">cd</span> /home/user/project
 
-<span class="comment"># 브랜치를 main에 머지한 후</span>
+<span class="comment"># 각 에이전트의 브랜치를 main에 머지</span>
 <span class="func">git merge</span> feat/auth-backend
 <span class="func">git merge</span> feat/auth-frontend
 
-<span class="comment"># worktree 제거</span>
+<span class="comment"># worktree 제거 (디렉터리도 함께 삭제됨)</span>
 <span class="func">git worktree remove</span> ../project-wt-backend
 <span class="func">git worktree remove</span> ../project-wt-frontend
 
